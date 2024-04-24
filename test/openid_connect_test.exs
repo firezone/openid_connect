@@ -627,6 +627,29 @@ defmodule OpenIDConnectTest do
       assert {"authorization", "Bearer #{token}"} in headers
     end
 
+    test "returns error when userinfo endpoint is not defined by discovery document" do
+      {jwks, []} = Code.eval_file("test/fixtures/jwks/jwk.exs")
+      jwk = JOSE.JWK.from(jwks)
+      {_, jwk_pubkey} = JOSE.JWK.to_public_map(jwk)
+
+      {_bypass, uri} =
+        start_fixture("vault", %{
+          "jwks" => jwk_pubkey,
+          "userinfo_endpoint" => nil
+        })
+
+      config = %{@config | discovery_document_uri: uri}
+
+      claims = %{"email" => "foo@john.com"}
+
+      {_alg, token} =
+        jwk
+        |> JOSE.JWS.sign(Jason.encode!(claims), %{"alg" => "RS256"})
+        |> JOSE.JWS.compact()
+
+      assert fetch_userinfo(config, token) == {:error, :userinfo_endpoint_is_not_implemented}
+    end
+
     test "returns error when userinfo endpoint is not available" do
       bypass = Bypass.open()
       userinfo_endpoint = "http://localhost:#{bypass.port}/userinfo"

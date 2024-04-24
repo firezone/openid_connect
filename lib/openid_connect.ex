@@ -314,6 +314,7 @@ defmodule OpenIDConnect do
     headers = [{"Authorization", "Bearer #{access_token}"}]
 
     with {:ok, document} <- Document.fetch_document(discovery_document_uri),
+         true <- not is_nil(document.userinfo_endpoint),
          request = Finch.build(:get, document.userinfo_endpoint, headers),
          {:ok, %Finch.Response{body: response, status: status}} when status in 200..299 <-
            Finch.request(request, OpenIDConnect.Finch),
@@ -321,6 +322,7 @@ defmodule OpenIDConnect do
       {:ok, json}
     else
       {:ok, %Finch.Response{body: response, status: status}} -> {:error, {status, response}}
+      false -> {:error, :userinfo_endpoint_is_not_implemented}
       other -> other
     end
   end

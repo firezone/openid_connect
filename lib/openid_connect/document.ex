@@ -70,8 +70,8 @@ defmodule OpenIDConnect.Document do
 
       {:ok, json, expires_at}
     else
-      {:ok, %Finch.Response{body: response, status: status}} ->
-        {:error, {status, :erlang.list_to_binary(response)}}
+      {:ok, %Finch.Response{body: body, status: status}} ->
+        {:error, {status, IO.iodata_to_binary(body)}}
 
       other ->
         other

@@ -446,6 +446,35 @@ defmodule OpenIDConnectTest do
       assert verify(config, token) == {:ok, claims}
     end
 
+    # This test is only needed due to the following issue in erlang-jose:
+    # https://github.com/potatosalad/erlang-jose/issues/177
+    #
+    # Prior to the code changes that prompted adding this test, if an EdDSA
+    # key was present in the JWKS prior to the key that signed the JWT
+    # the `verify_signature` function, would return an {:error, reason} and would
+    # cause the function to return early without finding the appropriate signing key.
+
+    test "returns claims when JWKS contains EdDSA key prior to signing key" do
+      {jwks, []} = Code.eval_file("test/fixtures/jwks/jwks_eddsa.exs")
+      {jwk, []} = Code.eval_file("test/fixtures/jwks/jwk.exs")
+
+      {_bypass, uri} = start_fixture("vault", %{"jwks" => jwks})
+      config = %{@config | discovery_document_uri: uri}
+
+      claims = %{
+        "email" => "brian@example.com",
+        "exp" => DateTime.utc_now() |> DateTime.add(10, :second) |> DateTime.to_unix(),
+        "aud" => config.client_id
+      }
+
+      {_alg, token} =
+        jwk
+        |> JOSE.JWS.sign(Jason.encode!(claims), %{"alg" => "RS256"})
+        |> JOSE.JWS.compact()
+
+      assert verify(config, token) == {:ok, claims}
+    end
+
     test "returns error when token is expired" do
       {jwks, []} = Code.eval_file("test/fixtures/jwks/jwk.exs")
       jwk = JOSE.JWK.from(jwks)

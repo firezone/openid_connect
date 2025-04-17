@@ -258,7 +258,8 @@ defmodule OpenIDConnect do
       |> verify_signature(token_alg, jwt)
       |> case do
         {false, _claims, _jwt} -> false
-        verified_claims -> verified_claims
+        {true, claims, jwt} -> {true, claims, jwt}
+        _other -> false
       end
     end)
   end

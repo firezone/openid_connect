@@ -32,6 +32,6 @@ defmodule OpenIDConnect.Fixtures do
     |> Enum.reduce(conn, fn {key, value}, conn ->
       Plug.Conn.put_resp_header(conn, key, value)
     end)
-    |> Plug.Conn.resp(status_code, Jason.encode!(body))
+    |> Plug.Conn.resp(status_code, JSON.encode!(body))
   end
 end

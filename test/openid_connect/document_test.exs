@@ -49,7 +49,8 @@ defmodule OpenIDConnect.DocumentTest do
                token_endpoint: "https://common.auth0.com/oauth/token"
              } = document
 
-      assert DateTime.diff(expires_at, DateTime.utc_now()) in (60 * 60 - 10)..(60 * 60 + 10)
+      # The fixture has Cache-Control: max-age=15, so expires_at should be ~15 seconds from now
+      assert DateTime.diff(expires_at, DateTime.utc_now()) in 13..17
     end
 
     test "supports all gateway providers" do
@@ -146,7 +147,7 @@ defmodule OpenIDConnect.DocumentTest do
       uri = "http://localhost:#{bypass.port}/.well-known/discovery-document.json"
       Bypass.down(bypass)
 
-      assert fetch_document(uri) == {:error, %Mint.TransportError{reason: :econnrefused}}
+      assert fetch_document(uri) == {:error, %Req.TransportError{reason: :econnrefused}}
     end
 
     test "takes expiration date from Cache-Control headers of the discovery document" do

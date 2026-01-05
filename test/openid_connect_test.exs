@@ -355,7 +355,30 @@ defmodule OpenIDConnectTest do
         |> Enum.map_join(".", fn header -> Base.encode64(header) end)
 
       assert verify(@config, token) ==
-               {:error, {:invalid_jwt, "token claims did not contain a JSON payload"}}
+               {:error, {:invalid_jwt, "token claims JSON is incomplete"}}
+    end
+
+    test "returns error when token header contains invalid JSON byte" do
+      # Create a token where the header contains an invalid byte (0xFF is not valid JSON)
+      header = Base.url_encode64(<<0xFF>>, padding: false)
+      claims = Base.url_encode64(~s({"foo":"bar"}), padding: false)
+      signature = Base.url_encode64("sig", padding: false)
+      token = "#{header}.#{claims}.#{signature}"
+
+      assert verify(@config, token) ==
+               {:error, {:invalid_jwt, "token claims contain invalid JSON"}}
+    end
+
+    test "returns error when token header contains invalid UTF-8 escape sequence" do
+      # Create a token where the header contains an invalid escape sequence
+      # \uXXXX is an invalid Unicode escape sequence (not valid hex)
+      header = Base.url_encode64(~s({"alg":"\\uXXXX"}), padding: false)
+      claims = Base.url_encode64(~s({"foo":"bar"}), padding: false)
+      signature = Base.url_encode64("sig", padding: false)
+      token = "#{header}.#{claims}.#{signature}"
+
+      assert verify(@config, token) ==
+               {:error, {:invalid_jwt, "token claims contain invalid UTF-8 escape sequence"}}
     end
 
     test "returns error when encoded token is doesn't have valid 'alg'" do
@@ -395,6 +418,28 @@ defmodule OpenIDConnectTest do
         "email" => "brian@example.com",
         "exp" => DateTime.utc_now() |> DateTime.add(10, :second) |> DateTime.to_unix(),
         "aud" => config.client_id
+      }
+
+      {_alg, token} =
+        jwk
+        |> JOSE.JWS.sign(JSON.encode!(claims), %{"alg" => "RS256"})
+        |> JOSE.JWS.compact()
+
+      assert verify(config, token) == {:ok, claims}
+    end
+
+    test "returns claims when aud claim is a list containing client_id" do
+      {jwks, []} = Code.eval_file("test/fixtures/jwks/jwk.exs")
+      jwk = JOSE.JWK.from(jwks)
+      {_, jwk_pubkey} = JOSE.JWK.to_public_map(jwk)
+
+      {_bypass, uri} = start_fixture("vault", %{"jwks" => jwk_pubkey})
+      config = %{@config | discovery_document_uri: uri}
+
+      claims = %{
+        "email" => "brian@example.com",
+        "exp" => DateTime.utc_now() |> DateTime.add(10, :second) |> DateTime.to_unix(),
+        "aud" => ["other-app", config.client_id, "another-app"]
       }
 
       {_alg, token} =
@@ -517,6 +562,28 @@ defmodule OpenIDConnectTest do
         |> JOSE.JWS.compact()
 
       assert verify(config, token) == {:error, {:invalid_jwt, "invalid exp claim: missing"}}
+    end
+
+    test "returns error when token expiration is not an integer" do
+      {jwks, []} = Code.eval_file("test/fixtures/jwks/jwk.exs")
+      jwk = JOSE.JWK.from(jwks)
+      {_, jwk_pubkey} = JOSE.JWK.to_public_map(jwk)
+
+      {_bypass, uri} = start_fixture("vault", %{"jwks" => jwk_pubkey})
+      config = %{@config | discovery_document_uri: uri}
+
+      claims = %{
+        "email" => "brian@example.com",
+        "exp" => "not-an-integer",
+        "aud" => config.client_id
+      }
+
+      {_alg, token} =
+        jwk
+        |> JOSE.JWS.sign(JSON.encode!(claims), %{"alg" => "RS256"})
+        |> JOSE.JWS.compact()
+
+      assert verify(config, token) == {:error, {:invalid_jwt, "invalid exp claim: is invalid"}}
     end
 
     test "returns error when aud claim is for another application" do
@@ -705,6 +772,36 @@ defmodule OpenIDConnectTest do
 
       assert fetch_userinfo(config, token) ==
                {:error, %Mint.TransportError{reason: :econnrefused}}
+    end
+
+    test "returns error when userinfo endpoint returns non-2XX status" do
+      bypass = Bypass.open()
+      userinfo_endpoint = "http://localhost:#{bypass.port}/userinfo"
+
+      Bypass.expect_once(bypass, "GET", "/userinfo", fn conn ->
+        Plug.Conn.resp(conn, 401, "Unauthorized")
+      end)
+
+      {jwks, []} = Code.eval_file("test/fixtures/jwks/jwk.exs")
+      jwk = JOSE.JWK.from(jwks)
+      {_, jwk_pubkey} = JOSE.JWK.to_public_map(jwk)
+
+      {_bypass, uri} =
+        start_fixture("vault", %{
+          "jwks" => jwk_pubkey,
+          "userinfo_endpoint" => userinfo_endpoint
+        })
+
+      config = %{@config | discovery_document_uri: uri}
+
+      claims = %{"email" => "foo@john.com"}
+
+      {_alg, token} =
+        jwk
+        |> JOSE.JWS.sign(JSON.encode!(claims), %{"alg" => "RS256"})
+        |> JOSE.JWS.compact()
+
+      assert fetch_userinfo(config, token) == {:error, {401, "Unauthorized"}}
     end
   end
 end

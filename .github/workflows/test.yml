@@ -73,6 +73,8 @@ jobs:
             otp-version: "27"
           - elixir-version: "1.19"
             otp-version: "27"
+          - elixir-version: "1.19"
+            otp-version: "28"
     steps:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v3
       - uses: erlef/setup-beam@e6d7c94229049569db56a7ad5a540c051a010af9 # v1

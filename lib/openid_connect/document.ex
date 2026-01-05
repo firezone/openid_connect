@@ -62,7 +62,7 @@ defmodule OpenIDConnect.Document do
 
     with {:ok, %{headers: headers, body: response, status: status}}
          when status in 200..299 <- read_finch_response(request),
-         {:ok, json} <- JSON.decode(response) do
+         {:ok, json} <- JSON.decode(IO.iodata_to_binary(response)) do
       expires_at =
         if remaining_lifetime = remaining_lifetime(headers) do
           DateTime.add(DateTime.utc_now(), remaining_lifetime, :second)

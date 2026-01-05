@@ -222,7 +222,7 @@ defmodule OpenIDConnect do
          {:ok, verified_claims} <- verify_claims(unverified_claims, config) do
       {:ok, verified_claims}
     else
-      {:error, %JSON.DecodeError{}} ->
+      {:error, {reason, _position}} when reason in [:unexpected_end, :unexpected_byte, :unexpected_sequence, :invalid_byte] ->
         {:error, {:invalid_jwt, "token claims did not contain a JSON payload"}}
 
       {:error, :peek_protected} ->

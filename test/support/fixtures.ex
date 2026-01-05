@@ -164,9 +164,7 @@ defmodule OpenIDConnect.Fixtures do
 
   def send_response(conn, status_code, body, headers) do
     conn =
-      headers
-      |> Enum.reduce(conn, fn {key, value}, conn ->
-        # Plug requires lowercase header keys
+      Enum.reduce(headers, conn, fn {key, value}, conn ->
         Plug.Conn.put_resp_header(conn, String.downcase(key), value)
       end)
 

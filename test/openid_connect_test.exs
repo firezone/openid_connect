@@ -330,7 +330,7 @@ defmodule OpenIDConnectTest do
                {:error, %Req.TransportError{reason: :econnrefused}}
     end
 
-    test "returns error when token endpoint is responds with non 2XX status code" do
+    test "returns error when token endpoint responds with non 2XX status code" do
       error_handler = fn conn ->
         conn
         |> Plug.Conn.put_status(401)

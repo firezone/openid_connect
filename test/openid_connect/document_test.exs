@@ -117,7 +117,7 @@ defmodule OpenIDConnect.DocumentTest do
       assert fetch_document(uri, req_test_options(test_name)) == {:error, {401, "{}"}}
     end
 
-    test "ignored documents larger than 1MB" do
+    test "ignores documents larger than 1MB" do
       test_name = unique_test_name()
 
       # Just over 1MB (1MB + 1KB) is enough to trigger the size limit

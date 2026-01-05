@@ -16,7 +16,6 @@ defmodule OpenIDConnect.Mixfile do
       name: "OpenID Connect",
       deps: deps(),
       docs: docs(),
-      name: "OpenID Connect",
       source_url: "https://github.com/DockYard/openid_connect",
       test_coverage: [tool: ExCoveralls]
     ]

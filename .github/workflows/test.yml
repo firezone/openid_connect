@@ -13,18 +13,19 @@ jobs:
         with:
           python-version: "3.9"
       - uses: erlef/setup-beam@e6d7c94229049569db56a7ad5a540c051a010af9 # v1
+        id: beam
         with:
-          otp-version: "25"
-          elixir-version: "1.14"
+          otp-version: "27"
+          elixir-version: "1.18"
       - uses: actions/cache@9255dc7a253b0ccc959486e2bca901246202afeb # v5.0.1
         name: Setup Elixir cache
         with:
           path: |
             deps
             _build
-          key: ${{ runner.os }}-mix-otp-25-${{ hashFiles('**/mix.lock') }}
+          key: ${{ runner.os }}-mix-${{ steps.beam.outputs.otp-version }}-${{ steps.beam.outputs.elixir-version }}-${{ hashFiles('**/mix.lock') }}
           restore-keys: |
-            ${{ runner.os }}-mix-otp-25-
+            ${{ runner.os }}-mix-${{ steps.beam.outputs.otp-version }}-${{ steps.beam.outputs.elixir-version }}-
       - uses: actions/cache@9255dc7a253b0ccc959486e2bca901246202afeb # v5.0.1
         name: Setup Python cache
         with:
@@ -66,14 +67,14 @@ jobs:
     strategy:
       matrix:
         include:
-          - elixir-version: "1.12"
-            otp-version: "24"
-          - elixir-version: "1.13"
-            otp-version: "24"
-          - elixir-version: "1.14"
-            otp-version: "25"
-          - elixir-version: "1.16"
+          - elixir-version: "1.18"
             otp-version: "26"
+          - elixir-version: "1.18"
+            otp-version: "27"
+          - elixir-version: "1.19"
+            otp-version: "27"
+          - elixir-version: "1.19"
+            otp-version: "28"
     steps:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v3
       - uses: erlef/setup-beam@e6d7c94229049569db56a7ad5a540c051a010af9 # v1

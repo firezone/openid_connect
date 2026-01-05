@@ -194,7 +194,7 @@ defmodule OpenIDConnect do
          request = Finch.build(:post, document.token_endpoint, headers, form_body),
          {:ok, %Finch.Response{body: response, status: status}} when status in 200..299 <-
            Finch.request(request, OpenIDConnect.Finch),
-         {:ok, json} <- Jason.decode(response) do
+         {:ok, json} <- JSON.decode(response) do
       {:ok, json}
     else
       {:ok, %Finch.Response{body: response, status: status}} -> {:error, {status, response}}
@@ -214,16 +214,22 @@ defmodule OpenIDConnect do
     discovery_document_uri = config.discovery_document_uri
 
     with {:ok, protected} <- peek_protected(jwt),
-         {:ok, decoded_protected} <- Jason.decode(protected),
+         {:ok, decoded_protected} <- JSON.decode(protected),
          {:ok, token_alg} <- Map.fetch(decoded_protected, "alg"),
          {:ok, document} <- Document.fetch_document(discovery_document_uri),
          {true, claims, _jwk} <- verify_signature(document.jwks, token_alg, jwt),
-         {:ok, unverified_claims} <- Jason.decode(claims),
+         {:ok, unverified_claims} <- JSON.decode(claims),
          {:ok, verified_claims} <- verify_claims(unverified_claims, config) do
       {:ok, verified_claims}
     else
-      {:error, %Jason.DecodeError{}} ->
-        {:error, {:invalid_jwt, "token claims did not contain a JSON payload"}}
+      {:error, {:unexpected_end, _position}} ->
+        {:error, {:invalid_jwt, "token claims JSON is incomplete"}}
+
+      {:error, {:invalid_byte, _position, _byte}} ->
+        {:error, {:invalid_jwt, "token claims contain invalid JSON"}}
+
+      {:error, {:unexpected_sequence, _position, _bytes}} ->
+        {:error, {:invalid_jwt, "token claims contain invalid UTF-8 escape sequence"}}
 
       {:error, :peek_protected} ->
         {:error, {:invalid_jwt, "invalid token format"}}
@@ -319,7 +325,7 @@ defmodule OpenIDConnect do
          request = Finch.build(:get, document.userinfo_endpoint, headers),
          {:ok, %Finch.Response{body: response, status: status}} when status in 200..299 <-
            Finch.request(request, OpenIDConnect.Finch),
-         {:ok, json} <- Jason.decode(response) do
+         {:ok, json} <- JSON.decode(response) do
       {:ok, json}
     else
       {:ok, %Finch.Response{body: response, status: status}} -> {:error, {status, response}}

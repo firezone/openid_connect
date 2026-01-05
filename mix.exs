@@ -7,7 +7,7 @@ defmodule OpenIDConnect.Mixfile do
     [
       app: :openid_connect,
       version: @version,
-      elixir: "~> 1.12",
+      elixir: "~> 1.18",
       build_embedded: Mix.env() == :prod,
       start_permanent: Mix.env() == :prod,
       elixirc_paths: elixirc_paths(Mix.env()),
@@ -16,10 +16,14 @@ defmodule OpenIDConnect.Mixfile do
       name: "OpenID Connect",
       deps: deps(),
       docs: docs(),
-      name: "OpenID Connect",
       source_url: "https://github.com/DockYard/openid_connect",
-      test_coverage: [tool: ExCoveralls],
-      preferred_cli_env: [
+      test_coverage: [tool: ExCoveralls]
+    ]
+  end
+
+  def cli do
+    [
+      preferred_envs: [
         coveralls: :test,
         "coveralls.detail": :test,
         "coveralls.post": :test,
@@ -64,7 +68,6 @@ defmodule OpenIDConnect.Mixfile do
 
   defp deps do
     [
-      {:jason, ">= 1.0.0"},
       {:finch, "~> 0.14"},
       {:jose, "~> 1.11"},
 

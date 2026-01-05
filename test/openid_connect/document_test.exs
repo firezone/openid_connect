@@ -120,10 +120,11 @@ defmodule OpenIDConnect.DocumentTest do
     test "ignored documents larger than 1MB" do
       test_name = unique_test_name()
 
-      large_document = String.duplicate("A", 1024 * 1024 * 1024 + 1024 * 1024 * 5)
+      # Just over 1MB (1MB + 1KB) is enough to trigger the size limit
+      large_document = String.duplicate("A", 1024 * 1024 + 1024)
 
       Req.Test.stub(test_name, fn conn ->
-        Req.Test.json(conn, %{"a" => large_document})
+        Req.Test.text(conn, large_document)
       end)
 
       uri = "http://#{test_name}/.well-known/discovery-document.json"

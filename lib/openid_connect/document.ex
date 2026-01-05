@@ -23,7 +23,7 @@ defmodule OpenIDConnect.Document do
   @document_max_byte_size Application.compile_env(
                             :openid_connect,
                             :document_max_byte_size,
-                            1024 * 1024 * 1024
+                            1024 * 1024
                           )
 
   def fetch_document(uri, req_options \\ []) do
@@ -116,7 +116,9 @@ defmodule OpenIDConnect.Document do
         new_size = IO.iodata_length(chunks) + byte_size(data)
 
         if new_size > max_byte_size do
-          {:halt, {:error, :body_too_large}}
+          # Use :cont instead of :halt because Req.Test's Plug adapter doesn't support :halt.
+          # Once we exceed the limit, we keep returning the error and ignore further data.
+          {:cont, {:error, :body_too_large}}
         else
           {:cont, {:ok, [chunks, data]}}
         end

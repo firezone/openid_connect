@@ -9,27 +9,23 @@ defmodule OpenIDConnect.Fixtures do
     {jwks, overrides} = Map.pop(overrides, "jwks")
 
     Req.Test.stub(test_name, fn conn ->
-      case conn.request_path do
-        "/.well-known/jwks.json" ->
-          {status_code, body, headers} = load_fixture(provider, "jwks")
-          body = if jwks, do: jwks, else: body
-          send_response(conn, status_code, body, headers)
-
-        "/.well-known/discovery-document.json" ->
-          {status_code, body, headers} = load_fixture(provider, "discovery_document")
-          body = Map.merge(body, %{"jwks_uri" => "#{endpoint}.well-known/jwks.json"})
-          body = Map.merge(body, overrides)
-          send_response(conn, status_code, body, headers)
-
-        _ ->
-          # Unknown path - return 404
-          conn
-          |> Plug.Conn.put_status(404)
-          |> Req.Test.json(%{error: "not_found"})
-      end
+      handle_fixture_request(conn, provider, endpoint, jwks, overrides)
     end)
 
     {test_name, "#{endpoint}.well-known/discovery-document.json"}
+  end
+
+  defp handle_fixture_request(conn, provider, endpoint, jwks, overrides) do
+    case conn.request_path do
+      "/.well-known/jwks.json" ->
+        serve_jwks(conn, provider, jwks)
+
+      "/.well-known/discovery-document.json" ->
+        serve_discovery_document(conn, provider, endpoint, overrides)
+
+      _ ->
+        serve_not_found(conn)
+    end
   end
 
   @doc """
@@ -46,53 +42,117 @@ defmodule OpenIDConnect.Fixtures do
     test_name = unique_test_name()
     endpoint = "http://#{test_name}/"
     {jwks, overrides} = Map.pop(overrides, "jwks")
-
-    # Auto-configure endpoints based on custom routes
-    token_endpoint =
-      if Map.has_key?(custom_routes, {"POST", "/token"}), do: "#{endpoint}token", else: nil
-
-    userinfo_endpoint =
-      if Map.has_key?(custom_routes, {"GET", "/userinfo"}), do: "#{endpoint}userinfo", else: nil
+    auto_endpoints = build_auto_endpoints(custom_routes, endpoint)
 
     Req.Test.stub(test_name, fn conn ->
-      route_key = {conn.method, conn.request_path}
-
-      cond do
-        handler = Map.get(custom_routes, route_key) ->
-          handler.(conn)
-
-        handler = Map.get(custom_routes, {"*", conn.request_path}) ->
-          handler.(conn)
-
-        conn.request_path == "/.well-known/jwks.json" ->
-          {status_code, body, headers} = load_fixture(provider, "jwks")
-          body = if jwks, do: jwks, else: body
-          send_response(conn, status_code, body, headers)
-
-        conn.request_path == "/.well-known/discovery-document.json" ->
-          {status_code, body, headers} = load_fixture(provider, "discovery_document")
-          body = Map.merge(body, %{"jwks_uri" => "#{endpoint}.well-known/jwks.json"})
-          body = Map.merge(body, overrides)
-          # Set custom endpoints
-          body =
-            if token_endpoint, do: Map.put(body, "token_endpoint", token_endpoint), else: body
-
-          body =
-            if userinfo_endpoint,
-              do: Map.put(body, "userinfo_endpoint", userinfo_endpoint),
-              else: body
-
-          send_response(conn, status_code, body, headers)
-
-        true ->
-          # Unknown path - return 404
-          conn
-          |> Plug.Conn.put_status(404)
-          |> Req.Test.json(%{error: "not_found"})
-      end
+      handle_routed_request(
+        conn,
+        provider,
+        endpoint,
+        jwks,
+        overrides,
+        custom_routes,
+        auto_endpoints
+      )
     end)
 
     {test_name, "#{endpoint}.well-known/discovery-document.json"}
+  end
+
+  defp build_auto_endpoints(custom_routes, endpoint) do
+    %{}
+    |> maybe_put_endpoint(custom_routes, {"POST", "/token"}, "token_endpoint", "#{endpoint}token")
+    |> maybe_put_endpoint(
+      custom_routes,
+      {"GET", "/userinfo"},
+      "userinfo_endpoint",
+      "#{endpoint}userinfo"
+    )
+  end
+
+  defp maybe_put_endpoint(map, custom_routes, route_key, endpoint_key, endpoint_value) do
+    if Map.has_key?(custom_routes, route_key) do
+      Map.put(map, endpoint_key, endpoint_value)
+    else
+      map
+    end
+  end
+
+  defp handle_routed_request(
+         conn,
+         provider,
+         endpoint,
+         jwks,
+         overrides,
+         custom_routes,
+         auto_endpoints
+       ) do
+    route_key = {conn.method, conn.request_path}
+    wildcard_key = {"*", conn.request_path}
+
+    cond do
+      handler = Map.get(custom_routes, route_key) ->
+        handler.(conn)
+
+      handler = Map.get(custom_routes, wildcard_key) ->
+        handler.(conn)
+
+      conn.request_path == "/.well-known/jwks.json" ->
+        serve_jwks(conn, provider, jwks)
+
+      conn.request_path == "/.well-known/discovery-document.json" ->
+        serve_discovery_document_with_auto_endpoints(
+          conn,
+          provider,
+          endpoint,
+          overrides,
+          auto_endpoints
+        )
+
+      true ->
+        serve_not_found(conn)
+    end
+  end
+
+  defp serve_jwks(conn, provider, jwks_override) do
+    {status_code, body, headers} = load_fixture(provider, "jwks")
+    body = jwks_override || body
+    send_response(conn, status_code, body, headers)
+  end
+
+  defp serve_discovery_document(conn, provider, endpoint, overrides) do
+    {status_code, body, headers} = load_fixture(provider, "discovery_document")
+
+    body =
+      body
+      |> Map.put("jwks_uri", "#{endpoint}.well-known/jwks.json")
+      |> Map.merge(overrides)
+
+    send_response(conn, status_code, body, headers)
+  end
+
+  defp serve_discovery_document_with_auto_endpoints(
+         conn,
+         provider,
+         endpoint,
+         overrides,
+         auto_endpoints
+       ) do
+    {status_code, body, headers} = load_fixture(provider, "discovery_document")
+
+    body =
+      body
+      |> Map.put("jwks_uri", "#{endpoint}.well-known/jwks.json")
+      |> Map.merge(overrides)
+      |> Map.merge(auto_endpoints)
+
+    send_response(conn, status_code, body, headers)
+  end
+
+  defp serve_not_found(conn) do
+    conn
+    |> Plug.Conn.put_status(404)
+    |> Req.Test.json(%{error: "not_found"})
   end
 
   def load_fixture(provider, type) do

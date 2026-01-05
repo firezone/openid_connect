@@ -23,14 +23,15 @@ defmodule OpenIDConnect.Document do
   @document_max_byte_size Application.compile_env(
                             :openid_connect,
                             :document_max_byte_size,
-                            1024 * 1024 * 1024
+                            1024 * 1024
                           )
 
-  def fetch_document(uri) do
+  def fetch_document(uri, req_options \\ []) do
     with :error <- Cache.fetch(uri),
-         {:ok, document_json, document_expires_at} <- fetch_remote_resource(uri),
+         {:ok, document_json, document_expires_at} <- fetch_remote_resource(uri, req_options),
          {:ok, document} <- build_document(document_json),
-         {:ok, jwks_json, jwks_expires_at} <- fetch_remote_resource(document_json["jwks_uri"]),
+         {:ok, jwks_json, jwks_expires_at} <-
+           fetch_remote_resource(document_json["jwks_uri"], req_options),
          {:ok, jwks} <- from_certs(jwks_json) do
       now = DateTime.utc_now()
 
@@ -55,11 +56,12 @@ defmodule OpenIDConnect.Document do
     end
   end
 
-  defp fetch_remote_resource(uri) when is_nil(uri), do: {:error, :invalid_discovery_document_uri}
+  defp fetch_remote_resource(uri, _req_options) when is_nil(uri),
+    do: {:error, :invalid_discovery_document_uri}
 
-  defp fetch_remote_resource(uri) do
+  defp fetch_remote_resource(uri, req_options) do
     with {:ok, %{headers: headers, body: response, status: status}}
-         when status in 200..299 <- read_response(uri),
+         when status in 200..299 <- read_response(uri, req_options),
          {:ok, json} <- JSON.decode(response) do
       expires_at =
         if remaining_lifetime = remaining_lifetime(headers) do
@@ -76,10 +78,11 @@ defmodule OpenIDConnect.Document do
     end
   end
 
-  defp read_response(uri) do
+  defp read_response(uri, req_options) do
     collector = body_collector(@document_max_byte_size)
+    options = Keyword.merge([into: collector, retry: retry_option()], req_options)
 
-    case Req.get(uri, into: collector, retry: retry_option()) do
+    case Req.get(uri, options) do
       {:ok, %{body: {:error, :body_too_large}}} ->
         {:error, :discovery_document_is_too_large}
 
@@ -113,7 +116,9 @@ defmodule OpenIDConnect.Document do
         new_size = IO.iodata_length(chunks) + byte_size(data)
 
         if new_size > max_byte_size do
-          {:halt, {:error, :body_too_large}}
+          # Use :cont instead of :halt because Req.Test's Plug adapter doesn't support :halt.
+          # Once we exceed the limit, we keep returning the error and ignore further data.
+          {:cont, {:error, :body_too_large}}
         else
           {:cont, {:ok, [chunks, data]}}
         end

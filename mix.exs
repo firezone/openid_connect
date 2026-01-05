@@ -17,7 +17,8 @@ defmodule OpenIDConnect.Mixfile do
       deps: deps(),
       docs: docs(),
       source_url: "https://github.com/DockYard/openid_connect",
-      test_coverage: [tool: ExCoveralls]
+      test_coverage: [tool: ExCoveralls],
+      test_ignore_filters: [~r"/fixtures/"]
     ]
   end
 
@@ -68,7 +69,7 @@ defmodule OpenIDConnect.Mixfile do
 
   defp deps do
     [
-      {:finch, "~> 0.14"},
+      {:req, "~> 0.5"},
       {:jose, "~> 1.11"},
 
       # Test deps

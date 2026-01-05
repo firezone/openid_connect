@@ -58,11 +58,9 @@ defmodule OpenIDConnect.Document do
   defp fetch_remote_resource(uri) when is_nil(uri), do: {:error, :invalid_discovery_document_uri}
 
   defp fetch_remote_resource(uri) do
-    request = Finch.build(:get, uri)
-
     with {:ok, %{headers: headers, body: response, status: status}}
-         when status in 200..299 <- read_finch_response(request),
-         {:ok, json} <- JSON.decode(IO.iodata_to_binary(response)) do
+         when status in 200..299 <- read_response(uri),
+         {:ok, json} <- JSON.decode(response) do
       expires_at =
         if remaining_lifetime = remaining_lifetime(headers) do
           DateTime.add(DateTime.utc_now(), remaining_lifetime, :second)
@@ -70,37 +68,26 @@ defmodule OpenIDConnect.Document do
 
       {:ok, json, expires_at}
     else
-      {:ok, %Finch.Response{body: body, status: status}} ->
-        {:error, {status, IO.iodata_to_binary(body)}}
+      {:ok, %{body: body, status: status}} ->
+        {:error, {status, body}}
 
       other ->
         other
     end
   end
 
-  defp read_finch_response(request) do
-    request
-    |> Finch.stream_while(OpenIDConnect.Finch, {%Finch.Response{body: ""}, 0}, fn
-      {:status, status}, {response, byte_size} ->
-        {:cont, {%{response | status: status}, byte_size}}
+  defp read_response(uri) do
+    collector = body_collector(@document_max_byte_size)
 
-      {:headers, headers}, {response, byte_size} ->
-        {:cont, {%{response | headers: headers}, byte_size}}
-
-      {:data, _data}, {_response, byte_size} when byte_size >= @document_max_byte_size ->
-        {:halt, {:error, :discovery_document_is_too_large}}
-
-      {:data, data}, {response, byte_size} ->
-        {:cont, {%{response | body: [response.body | data]}, byte_size + byte_size(data)}}
-
-      {:trailers, _trailers}, {response, byte_size} ->
-        {:cont, {response, byte_size}}
-    end)
-    |> case do
-      {:ok, {:error, :discovery_document_is_too_large}} ->
+    case Req.get(uri, into: collector, retry: retry_option()) do
+      {:ok, %{body: {:error, :body_too_large}}} ->
         {:error, :discovery_document_is_too_large}
 
-      {:ok, {response, _byte_size}} ->
+      {:ok, %{body: {:ok, body}} = response} ->
+        {:ok, %{response | body: IO.iodata_to_binary(body)}}
+
+      # Fallback for empty responses or when body_collector was never invoked
+      {:ok, response} ->
         {:ok, response}
 
       {:error, reason} ->
@@ -108,12 +95,36 @@ defmodule OpenIDConnect.Document do
     end
   end
 
-  defp remaining_lifetime(headers) do
-    headers =
-      for {k, v} <- headers, into: %{} do
-        {String.downcase(k), v}
-      end
+  defp body_collector(max_byte_size) do
+    fn {:data, data}, {req, resp} ->
+      {action, body} = collect_body_chunk(resp.body, data, max_byte_size)
+      {action, {req, %{resp | body: body}}}
+    end
+  end
 
+  defp collect_body_chunk(body, data, max_byte_size) do
+    acc = normalize_body_acc(body)
+
+    case acc do
+      {:error, _} = error ->
+        {:cont, error}
+
+      {:ok, chunks} ->
+        new_size = IO.iodata_length(chunks) + byte_size(data)
+
+        if new_size > max_byte_size do
+          {:halt, {:error, :body_too_large}}
+        else
+          {:cont, {:ok, [chunks, data]}}
+        end
+    end
+  end
+
+  defp normalize_body_acc({:ok, _} = ok), do: ok
+  defp normalize_body_acc({:error, _} = error), do: error
+  defp normalize_body_acc(_), do: {:ok, []}
+
+  defp remaining_lifetime(headers) do
     max_age = get_max_age(headers)
     age = get_age(headers)
 
@@ -124,17 +135,31 @@ defmodule OpenIDConnect.Document do
     end
   end
 
-  defp get_max_age(headers) when is_map(headers) do
-    cache_control = Map.get(headers, "cache-control", "")
-
-    case Regex.run(~r"(?<=max-age=)\d+", cache_control) do
-      [max_age] -> String.to_integer(max_age)
-      _ -> nil
+  # Req returns headers as %{"header-name" => ["value1", "value2"]}.
+  # The binary fallback handles Plug/Bypass test fixtures which use single string values.
+  defp get_header(headers, name) do
+    case Map.get(headers, name) do
+      nil -> nil
+      [value | _] -> value
+      value when is_binary(value) -> value
     end
   end
 
-  defp get_age(headers) when is_map(headers) do
-    case Map.get(headers, "age") do
+  defp get_max_age(headers) do
+    case get_header(headers, "cache-control") do
+      nil ->
+        nil
+
+      cache_control ->
+        case Regex.run(~r"(?<=max-age=)\d+", cache_control) do
+          [max_age] -> String.to_integer(max_age)
+          _ -> nil
+        end
+    end
+  end
+
+  defp get_age(headers) do
+    case get_header(headers, "age") do
       nil -> nil
       age -> String.to_integer(age)
     end
@@ -177,5 +202,9 @@ defmodule OpenIDConnect.Document do
     {:ok, JOSE.JWK.from(certs)}
   rescue
     _ -> {:error, :invalid_jwks_certificates}
+  end
+
+  defp retry_option do
+    Application.get_env(:openid_connect, :retry, :safe_transient)
   end
 end

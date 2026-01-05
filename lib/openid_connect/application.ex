@@ -8,17 +8,7 @@ defmodule OpenIDConnect.Application do
 
   def children do
     [
-      {Finch,
-       name: OpenIDConnect.Finch,
-       pools: %{
-         default: pool_opts()
-       }},
       OpenIDConnect.Document.Cache
     ]
-  end
-
-  defp pool_opts do
-    transport_opts = Application.get_env(:openid_connect, :finch_transport_opts, [])
-    [conn_opts: [transport_opts: transport_opts]]
   end
 end

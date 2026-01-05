@@ -183,21 +183,16 @@ defmodule OpenIDConnect do
   def fetch_tokens(config, params) do
     discovery_document_uri = config.discovery_document_uri
 
-    form_body =
+    form_params =
       %{client_id: config.client_id, client_secret: config.client_secret}
       |> Map.merge(params)
-      |> URI.encode_query(:www_form)
-
-    headers = [{"Content-Type", "application/x-www-form-urlencoded"}]
 
     with {:ok, document} <- Document.fetch_document(discovery_document_uri),
-         request = Finch.build(:post, document.token_endpoint, headers, form_body),
-         {:ok, %Finch.Response{body: response, status: status}} when status in 200..299 <-
-           Finch.request(request, OpenIDConnect.Finch),
-         {:ok, json} <- JSON.decode(response) do
-      {:ok, json}
+         {:ok, %{status: status, body: body}} when status in 200..299 <-
+           Req.post(document.token_endpoint, form: form_params, retry: retry_option()) do
+      {:ok, decode_body(body)}
     else
-      {:ok, %Finch.Response{body: response, status: status}} -> {:error, {status, response}}
+      {:ok, %{status: status, body: body}} -> {:error, {status, decode_body(body)}}
       other -> other
     end
   end
@@ -322,15 +317,23 @@ defmodule OpenIDConnect do
 
     with {:ok, document} <- Document.fetch_document(discovery_document_uri),
          true <- not is_nil(document.userinfo_endpoint),
-         request = Finch.build(:get, document.userinfo_endpoint, headers),
-         {:ok, %Finch.Response{body: response, status: status}} when status in 200..299 <-
-           Finch.request(request, OpenIDConnect.Finch),
-         {:ok, json} <- JSON.decode(response) do
-      {:ok, json}
+         {:ok, %{status: status, body: body}} when status in 200..299 <-
+           Req.get(document.userinfo_endpoint, headers: headers, retry: retry_option()) do
+      {:ok, decode_body(body)}
     else
-      {:ok, %Finch.Response{body: response, status: status}} -> {:error, {status, response}}
+      {:ok, %{status: status, body: body}} -> {:error, {status, decode_body(body)}}
       false -> {:error, :userinfo_endpoint_is_not_implemented}
       other -> other
+    end
+  end
+
+  defp decode_body(nil), do: nil
+  defp decode_body(body) when is_map(body), do: body
+
+  defp decode_body(body) when is_binary(body) do
+    case JSON.decode(body) do
+      {:ok, json} -> json
+      {:error, _} -> body
     end
   end
 
@@ -340,5 +343,9 @@ defmodule OpenIDConnect do
     uri
     |> URI.merge("?#{query}")
     |> URI.to_string()
+  end
+
+  defp retry_option do
+    Application.get_env(:openid_connect, :retry, :safe_transient)
   end
 end

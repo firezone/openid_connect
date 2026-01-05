@@ -116,7 +116,7 @@ defmodule OpenIDConnectTest do
       config = %{@config | discovery_document_uri: uri}
 
       assert authorization_uri(config, @redirect_uri, %{client_id: "foo"}) ==
-               {:error, %Mint.TransportError{reason: :econnrefused}}
+               {:error, %Req.TransportError{reason: :econnrefused}}
     end
   end
 
@@ -160,7 +160,7 @@ defmodule OpenIDConnectTest do
       config = %{@config | discovery_document_uri: uri}
 
       assert end_session_uri(config, %{client_id: "foo"}) ==
-               {:error, %Mint.TransportError{reason: :econnrefused}}
+               {:error, %Req.TransportError{reason: :econnrefused}}
     end
   end
 
@@ -274,7 +274,7 @@ defmodule OpenIDConnectTest do
       params = %{grant_type: "authorization_code", redirect_uri: @redirect_uri}
 
       assert fetch_tokens(config, params) ==
-               {:error, %Mint.TransportError{reason: :econnrefused}}
+               {:error, %Req.TransportError{reason: :econnrefused}}
     end
 
     test "returns error when token endpoint is responds with non 2XX status code" do
@@ -289,7 +289,7 @@ defmodule OpenIDConnectTest do
       config = %{@config | discovery_document_uri: uri}
 
       assert fetch_tokens(config, %{}) ==
-               {:error, {401, "{\"error\":\"unauthorized\"}"}}
+               {:error, {401, %{"error" => "unauthorized"}}}
     end
 
     test "returns error when real provider token endpoint is responded with invalid code" do
@@ -303,9 +303,7 @@ defmodule OpenIDConnectTest do
                  code: "foo"
                })
 
-      resp_json = JSON.decode!(resp)
-
-      assert resp_json == %{
+      assert resp == %{
                "error" => "invalid_client",
                "error_description" => "The OAuth client was not found."
              }
@@ -339,7 +337,7 @@ defmodule OpenIDConnectTest do
       }
 
       assert fetch_tokens(config, params) ==
-               {:error, %Mint.TransportError{reason: :econnrefused}}
+               {:error, %Req.TransportError{reason: :econnrefused}}
     end
   end
 
@@ -667,7 +665,7 @@ defmodule OpenIDConnectTest do
         |> JOSE.JWS.compact()
 
       assert verify(config, token) ==
-               {:error, %Mint.TransportError{reason: :econnrefused}}
+               {:error, %Req.TransportError{reason: :econnrefused}}
     end
   end
 
@@ -771,7 +769,7 @@ defmodule OpenIDConnectTest do
         |> JOSE.JWS.compact()
 
       assert fetch_userinfo(config, token) ==
-               {:error, %Mint.TransportError{reason: :econnrefused}}
+               {:error, %Req.TransportError{reason: :econnrefused}}
     end
 
     test "returns error when userinfo endpoint returns non-2XX status" do

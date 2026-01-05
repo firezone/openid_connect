@@ -1,6 +1,7 @@
 version: 2
 updates:
   - package-ecosystem: "github-actions"
+    open-pull-requests-limit: 25
     directory: "/"
     schedule:
       interval: "weekly"
@@ -8,6 +9,7 @@ updates:
       prefix: "ci"
 
   - package-ecosystem: "mix"
+    open-pull-requests-limit: 25
     directory: "/"
     schedule:
       interval: "weekly"

@@ -10,13 +10,14 @@ defmodule OpenIDConnectTest do
     client_id: "CLIENT_ID",
     client_secret: "CLIENT_SECRET",
     response_type: "code id_token token",
-    scope: "openid email profile"
+    scope: "openid email profile",
+    req_options: []
   }
 
   describe "authorization_uri/3" do
     test "generates authorization url with scope and response_type as binaries" do
-      {_bypass, uri} = start_fixture("google")
-      config = %{@config | discovery_document_uri: uri}
+      {test_name, uri} = start_fixture("google")
+      config = %{@config | discovery_document_uri: uri, req_options: req_test_options(test_name)}
 
       assert {:ok, url} = authorization_uri(config, @redirect_uri)
       assert url =~ "https://accounts.google.com/o/oauth2/v2/auth?"
@@ -27,8 +28,14 @@ defmodule OpenIDConnectTest do
     end
 
     test "generates authorization url with scope as enum" do
-      {_bypass, uri} = start_fixture("google")
-      config = %{@config | discovery_document_uri: uri, scope: ["openid", "email", "profile"]}
+      {test_name, uri} = start_fixture("google")
+
+      config = %{
+        @config
+        | discovery_document_uri: uri,
+          scope: ["openid", "email", "profile"],
+          req_options: req_test_options(test_name)
+      }
 
       assert {:ok, url} = authorization_uri(config, @redirect_uri)
       assert url =~ "https://accounts.google.com/o/oauth2/v2/auth?"
@@ -39,12 +46,13 @@ defmodule OpenIDConnectTest do
     end
 
     test "generates authorization url with response_type as enum" do
-      {_bypass, uri} = start_fixture("google")
+      {test_name, uri} = start_fixture("google")
 
       config = %{
         @config
         | discovery_document_uri: uri,
-          response_type: ["code", "id_token", "token"]
+          response_type: ["code", "id_token", "token"],
+          req_options: req_test_options(test_name)
       }
 
       assert {:ok, url} = authorization_uri(config, @redirect_uri)
@@ -57,34 +65,70 @@ defmodule OpenIDConnectTest do
     end
 
     test "returns error on empty scope" do
-      {_bypass, uri} = start_fixture("google")
+      {test_name, uri} = start_fixture("google")
 
-      config = %{@config | discovery_document_uri: uri, scope: nil}
+      config = %{
+        @config
+        | discovery_document_uri: uri,
+          scope: nil,
+          req_options: req_test_options(test_name)
+      }
+
       assert authorization_uri(config, @redirect_uri) == {:error, :invalid_scope}
 
-      config = %{@config | discovery_document_uri: uri, scope: ""}
+      config = %{
+        @config
+        | discovery_document_uri: uri,
+          scope: "",
+          req_options: req_test_options(test_name)
+      }
+
       assert authorization_uri(config, @redirect_uri) == {:error, :invalid_scope}
 
-      config = %{@config | discovery_document_uri: uri, scope: []}
+      config = %{
+        @config
+        | discovery_document_uri: uri,
+          scope: [],
+          req_options: req_test_options(test_name)
+      }
+
       assert authorization_uri(config, @redirect_uri) == {:error, :invalid_scope}
     end
 
     test "returns error on empty response_type" do
-      {_bypass, uri} = start_fixture("google")
+      {test_name, uri} = start_fixture("google")
 
-      config = %{@config | discovery_document_uri: uri, response_type: nil}
+      config = %{
+        @config
+        | discovery_document_uri: uri,
+          response_type: nil,
+          req_options: req_test_options(test_name)
+      }
+
       assert authorization_uri(config, @redirect_uri) == {:error, :invalid_response_type}
 
-      config = %{@config | discovery_document_uri: uri, response_type: ""}
+      config = %{
+        @config
+        | discovery_document_uri: uri,
+          response_type: "",
+          req_options: req_test_options(test_name)
+      }
+
       assert authorization_uri(config, @redirect_uri) == {:error, :invalid_response_type}
 
-      config = %{@config | discovery_document_uri: uri, response_type: []}
+      config = %{
+        @config
+        | discovery_document_uri: uri,
+          response_type: [],
+          req_options: req_test_options(test_name)
+      }
+
       assert authorization_uri(config, @redirect_uri) == {:error, :invalid_response_type}
     end
 
     test "adds optional params" do
-      {_bypass, uri} = start_fixture("google")
-      config = %{@config | discovery_document_uri: uri}
+      {test_name, uri} = start_fixture("google")
+      config = %{@config | discovery_document_uri: uri, req_options: req_test_options(test_name)}
 
       assert {:ok, url} = authorization_uri(config, @redirect_uri, %{"state" => "foo"})
 
@@ -97,8 +141,8 @@ defmodule OpenIDConnectTest do
     end
 
     test "params can override default values" do
-      {_bypass, uri} = start_fixture("google")
-      config = %{@config | discovery_document_uri: uri}
+      {test_name, uri} = start_fixture("google")
+      config = %{@config | discovery_document_uri: uri, req_options: req_test_options(test_name)}
 
       assert {:ok, url} = authorization_uri(config, @redirect_uri, %{client_id: "foo"})
       assert url =~ "https://accounts.google.com/o/oauth2/v2/auth?"
@@ -109,11 +153,14 @@ defmodule OpenIDConnectTest do
     end
 
     test "returns error when document is not available" do
-      bypass = Bypass.open()
-      uri = "http://localhost:#{bypass.port}/.well-known/discovery-document.json"
-      Bypass.down(bypass)
+      test_name = unique_test_name()
+      uri = "http://#{test_name}/.well-known/discovery-document.json"
 
-      config = %{@config | discovery_document_uri: uri}
+      Req.Test.stub(test_name, fn conn ->
+        Req.Test.transport_error(conn, :econnrefused)
+      end)
+
+      config = %{@config | discovery_document_uri: uri, req_options: req_test_options(test_name)}
 
       assert authorization_uri(config, @redirect_uri, %{client_id: "foo"}) ==
                {:error, %Req.TransportError{reason: :econnrefused}}
@@ -122,42 +169,45 @@ defmodule OpenIDConnectTest do
 
   describe "end_session_uri/2" do
     test "returns error when provider doesn't specify end_session_endpoint" do
-      {_bypass, uri} = start_fixture("google")
-      config = %{@config | discovery_document_uri: uri}
+      {test_name, uri} = start_fixture("google")
+      config = %{@config | discovery_document_uri: uri, req_options: req_test_options(test_name)}
 
       assert end_session_uri(config) == {:error, :endpoint_not_set}
     end
 
     test "generates authorization url" do
-      {_bypass, uri} = start_fixture("okta")
-      config = %{@config | discovery_document_uri: uri}
+      {test_name, uri} = start_fixture("okta")
+      config = %{@config | discovery_document_uri: uri, req_options: req_test_options(test_name)}
 
       assert end_session_uri(config) ==
                {:ok, "https://common.okta.com/oauth2/v1/logout?client_id=CLIENT_ID"}
     end
 
     test "adds optional params" do
-      {_bypass, uri} = start_fixture("okta")
-      config = %{@config | discovery_document_uri: uri}
+      {test_name, uri} = start_fixture("okta")
+      config = %{@config | discovery_document_uri: uri, req_options: req_test_options(test_name)}
 
       assert end_session_uri(config, %{"state" => "foo"}) ==
                {:ok, "https://common.okta.com/oauth2/v1/logout?client_id=CLIENT_ID&state=foo"}
     end
 
     test "params can override default values" do
-      {_bypass, uri} = start_fixture("okta")
-      config = %{@config | discovery_document_uri: uri}
+      {test_name, uri} = start_fixture("okta")
+      config = %{@config | discovery_document_uri: uri, req_options: req_test_options(test_name)}
 
       assert end_session_uri(config, %{client_id: "foo"}) ==
                {:ok, "https://common.okta.com/oauth2/v1/logout?client_id=foo"}
     end
 
     test "returns error when document is not available" do
-      bypass = Bypass.open()
-      uri = "http://localhost:#{bypass.port}/.well-known/discovery-document.json"
-      Bypass.down(bypass)
+      test_name = unique_test_name()
+      uri = "http://#{test_name}/.well-known/discovery-document.json"
 
-      config = %{@config | discovery_document_uri: uri}
+      Req.Test.stub(test_name, fn conn ->
+        Req.Test.transport_error(conn, :econnrefused)
+      end)
+
+      config = %{@config | discovery_document_uri: uri, req_options: req_test_options(test_name)}
 
       assert end_session_uri(config, %{client_id: "foo"}) ==
                {:error, %Req.TransportError{reason: :econnrefused}}
@@ -166,7 +216,6 @@ defmodule OpenIDConnectTest do
 
   describe "fetch_tokens/2" do
     test "fetches the token from OAuth token endpoint" do
-      bypass = Bypass.open()
       test_pid = self()
 
       token_response_attrs = %{
@@ -175,15 +224,16 @@ defmodule OpenIDConnectTest do
         "refresh_token" => "REFRESH_TOKEN"
       }
 
-      Bypass.expect_once(bypass, "POST", "/token", fn conn ->
+      token_handler = fn conn ->
         {:ok, body, conn} = Plug.Conn.read_body(conn)
         send(test_pid, {:req, body})
-        Plug.Conn.resp(conn, 200, JSON.encode!(token_response_attrs))
-      end)
+        Req.Test.json(conn, token_response_attrs)
+      end
 
-      token_endpoint = "http://localhost:#{bypass.port}/token"
-      {_bypass, uri} = start_fixture("google", %{token_endpoint: token_endpoint})
-      config = %{@config | discovery_document_uri: uri}
+      {test_name, uri} =
+        start_fixture_with_routes("google", %{}, %{{"POST", "/token"} => token_handler})
+
+      config = %{@config | discovery_document_uri: uri, req_options: req_test_options(test_name)}
 
       params = %{
         grant_type: "authorization_code",
@@ -204,7 +254,6 @@ defmodule OpenIDConnectTest do
     end
 
     test "allows to override the default params" do
-      bypass = Bypass.open()
       test_pid = self()
 
       token_response_attrs = %{
@@ -213,15 +262,16 @@ defmodule OpenIDConnectTest do
         "refresh_token" => "REFRESH_TOKEN"
       }
 
-      Bypass.expect_once(bypass, "POST", "/token", fn conn ->
+      token_handler = fn conn ->
         {:ok, body, conn} = Plug.Conn.read_body(conn)
         send(test_pid, {:req, body})
-        Plug.Conn.resp(conn, 200, JSON.encode!(token_response_attrs))
-      end)
+        Req.Test.json(conn, token_response_attrs)
+      end
 
-      token_endpoint = "http://localhost:#{bypass.port}/token"
-      {_bypass, uri} = start_fixture("google", %{token_endpoint: token_endpoint})
-      config = %{@config | discovery_document_uri: uri}
+      {test_name, uri} =
+        start_fixture_with_routes("google", %{}, %{{"POST", "/token"} => token_handler})
+
+      config = %{@config | discovery_document_uri: uri, req_options: req_test_options(test_name)}
 
       fetch_tokens(config, %{
         client_id: "foo",
@@ -237,7 +287,6 @@ defmodule OpenIDConnectTest do
     end
 
     test "allows to use refresh_token grant type" do
-      bypass = Bypass.open()
       test_pid = self()
 
       token_response_attrs = %{
@@ -246,15 +295,16 @@ defmodule OpenIDConnectTest do
         "refresh_token" => "REFRESH_TOKEN"
       }
 
-      Bypass.expect_once(bypass, "POST", "/token", fn conn ->
+      token_handler = fn conn ->
         {:ok, body, conn} = Plug.Conn.read_body(conn)
         send(test_pid, {:req, body})
-        Plug.Conn.resp(conn, 200, JSON.encode!(token_response_attrs))
-      end)
+        Req.Test.json(conn, token_response_attrs)
+      end
 
-      token_endpoint = "http://localhost:#{bypass.port}/token"
-      {_bypass, uri} = start_fixture("google", %{token_endpoint: token_endpoint})
-      config = %{@config | discovery_document_uri: uri}
+      {test_name, uri} =
+        start_fixture_with_routes("google", %{}, %{{"POST", "/token"} => token_handler})
+
+      config = %{@config | discovery_document_uri: uri, req_options: req_test_options(test_name)}
 
       fetch_tokens(config, %{grant_type: "refresh_token", refresh_token: "foo"})
 
@@ -266,11 +316,14 @@ defmodule OpenIDConnectTest do
     end
 
     test "returns error when token endpoint is not available" do
-      bypass = Bypass.open()
-      Bypass.down(bypass)
-      token_endpoint = "http://localhost:#{bypass.port}/token"
-      {_bypass, uri} = start_fixture("google", %{token_endpoint: token_endpoint})
-      config = %{@config | discovery_document_uri: uri}
+      error_handler = fn conn ->
+        Req.Test.transport_error(conn, :econnrefused)
+      end
+
+      {test_name, uri} =
+        start_fixture_with_routes("google", %{}, %{{"POST", "/token"} => error_handler})
+
+      config = %{@config | discovery_document_uri: uri, req_options: req_test_options(test_name)}
       params = %{grant_type: "authorization_code", redirect_uri: @redirect_uri}
 
       assert fetch_tokens(config, params) ==
@@ -278,23 +331,35 @@ defmodule OpenIDConnectTest do
     end
 
     test "returns error when token endpoint is responds with non 2XX status code" do
-      bypass = Bypass.open()
+      error_handler = fn conn ->
+        conn
+        |> Plug.Conn.put_status(401)
+        |> Req.Test.json(%{"error" => "unauthorized"})
+      end
 
-      Bypass.expect_once(bypass, "POST", "/token", fn conn ->
-        Plug.Conn.resp(conn, 401, JSON.encode!(%{"error" => "unauthorized"}))
-      end)
+      {test_name, uri} =
+        start_fixture_with_routes("google", %{}, %{{"POST", "/token"} => error_handler})
 
-      token_endpoint = "http://localhost:#{bypass.port}/token"
-      {_bypass, uri} = start_fixture("google", %{token_endpoint: token_endpoint})
-      config = %{@config | discovery_document_uri: uri}
+      config = %{@config | discovery_document_uri: uri, req_options: req_test_options(test_name)}
 
       assert fetch_tokens(config, %{}) ==
                {:error, {401, %{"error" => "unauthorized"}}}
     end
 
-    test "returns error when real provider token endpoint is responded with invalid code" do
-      {_bypass, uri} = start_fixture("google")
-      config = %{@config | discovery_document_uri: uri}
+    test "returns error when token endpoint responds with invalid code" do
+      google_error_handler = fn conn ->
+        conn
+        |> Plug.Conn.put_status(401)
+        |> Req.Test.json(%{
+          "error" => "invalid_client",
+          "error_description" => "The OAuth client was not found."
+        })
+      end
+
+      {test_name, uri} =
+        start_fixture_with_routes("google", %{}, %{{"POST", "/token"} => google_error_handler})
+
+      config = %{@config | discovery_document_uri: uri, req_options: req_test_options(test_name)}
 
       assert {:error, {401, resp}} =
                fetch_tokens(config, %{
@@ -309,8 +374,20 @@ defmodule OpenIDConnectTest do
              }
 
       for provider <- ["auth0", "okta", "onelogin"] do
-        {_bypass, uri} = start_fixture(provider)
-        config = %{@config | discovery_document_uri: uri}
+        error_handler = fn conn ->
+          conn
+          |> Plug.Conn.put_status(400)
+          |> Req.Test.json(%{"error" => "invalid_grant"})
+        end
+
+        {test_name, uri} =
+          start_fixture_with_routes(provider, %{}, %{{"POST", "/token"} => error_handler})
+
+        config = %{
+          @config
+          | discovery_document_uri: uri,
+            req_options: req_test_options(test_name)
+        }
 
         assert {:error, {status, _resp}} =
                  fetch_tokens(config, %{
@@ -324,11 +401,14 @@ defmodule OpenIDConnectTest do
     end
 
     test "returns error when document is not available" do
-      bypass = Bypass.open()
-      uri = "http://localhost:#{bypass.port}/.well-known/discovery-document.json"
-      Bypass.down(bypass)
+      test_name = unique_test_name()
+      uri = "http://#{test_name}/.well-known/discovery-document.json"
 
-      config = %{@config | discovery_document_uri: uri}
+      Req.Test.stub(test_name, fn conn ->
+        Req.Test.transport_error(conn, :econnrefused)
+      end)
+
+      config = %{@config | discovery_document_uri: uri, req_options: req_test_options(test_name)}
 
       params = %{
         grant_type: "authorization_code",
@@ -389,8 +469,8 @@ defmodule OpenIDConnectTest do
     end
 
     test "returns error when token is valid but invalid for a provider" do
-      {_bypass, uri} = start_fixture("okta")
-      config = %{@config | discovery_document_uri: uri}
+      {test_name, uri} = start_fixture("okta")
+      config = %{@config | discovery_document_uri: uri, req_options: req_test_options(test_name)}
       {jwk, []} = Code.eval_file("test/fixtures/jwks/jwk.exs")
 
       claims = %{"email" => "brian@example.com"}
@@ -409,8 +489,8 @@ defmodule OpenIDConnectTest do
       jwk = JOSE.JWK.from(jwks)
       {_, jwk_pubkey} = JOSE.JWK.to_public_map(jwk)
 
-      {_bypass, uri} = start_fixture("vault", %{"jwks" => jwk_pubkey})
-      config = %{@config | discovery_document_uri: uri}
+      {test_name, uri} = start_fixture("vault", %{"jwks" => jwk_pubkey})
+      config = %{@config | discovery_document_uri: uri, req_options: req_test_options(test_name)}
 
       claims = %{
         "email" => "brian@example.com",
@@ -431,8 +511,8 @@ defmodule OpenIDConnectTest do
       jwk = JOSE.JWK.from(jwks)
       {_, jwk_pubkey} = JOSE.JWK.to_public_map(jwk)
 
-      {_bypass, uri} = start_fixture("vault", %{"jwks" => jwk_pubkey})
-      config = %{@config | discovery_document_uri: uri}
+      {test_name, uri} = start_fixture("vault", %{"jwks" => jwk_pubkey})
+      config = %{@config | discovery_document_uri: uri, req_options: req_test_options(test_name)}
 
       claims = %{
         "email" => "brian@example.com",
@@ -459,8 +539,8 @@ defmodule OpenIDConnectTest do
 
       {_, jwk_pubkey} = JOSE.JWK.to_public_map(jwk)
 
-      {_bypass, uri} = start_fixture("vault", %{"jwks" => jwk_pubkey})
-      config = %{@config | discovery_document_uri: uri}
+      {test_name, uri} = start_fixture("vault", %{"jwks" => jwk_pubkey})
+      config = %{@config | discovery_document_uri: uri, req_options: req_test_options(test_name)}
 
       claims = %{
         "email" => "brian@example.com",
@@ -501,8 +581,8 @@ defmodule OpenIDConnectTest do
       {jwks, []} = Code.eval_file("test/fixtures/jwks/jwks_eddsa.exs")
       {jwk, []} = Code.eval_file("test/fixtures/jwks/jwk.exs")
 
-      {_bypass, uri} = start_fixture("vault", %{"jwks" => jwks})
-      config = %{@config | discovery_document_uri: uri}
+      {test_name, uri} = start_fixture("vault", %{"jwks" => jwks})
+      config = %{@config | discovery_document_uri: uri, req_options: req_test_options(test_name)}
 
       claims = %{
         "email" => "brian@example.com",
@@ -523,8 +603,8 @@ defmodule OpenIDConnectTest do
       jwk = JOSE.JWK.from(jwks)
       {_, jwk_pubkey} = JOSE.JWK.to_public_map(jwk)
 
-      {_bypass, uri} = start_fixture("vault", %{"jwks" => jwk_pubkey})
-      config = %{@config | discovery_document_uri: uri}
+      {test_name, uri} = start_fixture("vault", %{"jwks" => jwk_pubkey})
+      config = %{@config | discovery_document_uri: uri, req_options: req_test_options(test_name)}
 
       claims = %{
         "email" => "brian@example.com",
@@ -546,8 +626,8 @@ defmodule OpenIDConnectTest do
       jwk = JOSE.JWK.from(jwks)
       {_, jwk_pubkey} = JOSE.JWK.to_public_map(jwk)
 
-      {_bypass, uri} = start_fixture("vault", %{"jwks" => jwk_pubkey})
-      config = %{@config | discovery_document_uri: uri}
+      {test_name, uri} = start_fixture("vault", %{"jwks" => jwk_pubkey})
+      config = %{@config | discovery_document_uri: uri, req_options: req_test_options(test_name)}
 
       claims = %{
         "email" => "brian@example.com",
@@ -567,8 +647,8 @@ defmodule OpenIDConnectTest do
       jwk = JOSE.JWK.from(jwks)
       {_, jwk_pubkey} = JOSE.JWK.to_public_map(jwk)
 
-      {_bypass, uri} = start_fixture("vault", %{"jwks" => jwk_pubkey})
-      config = %{@config | discovery_document_uri: uri}
+      {test_name, uri} = start_fixture("vault", %{"jwks" => jwk_pubkey})
+      config = %{@config | discovery_document_uri: uri, req_options: req_test_options(test_name)}
 
       claims = %{
         "email" => "brian@example.com",
@@ -589,8 +669,8 @@ defmodule OpenIDConnectTest do
       jwk = JOSE.JWK.from(jwks)
       {_, jwk_pubkey} = JOSE.JWK.to_public_map(jwk)
 
-      {_bypass, uri} = start_fixture("vault", %{"jwks" => jwk_pubkey})
-      config = %{@config | discovery_document_uri: uri}
+      {test_name, uri} = start_fixture("vault", %{"jwks" => jwk_pubkey})
+      config = %{@config | discovery_document_uri: uri, req_options: req_test_options(test_name)}
 
       claims = %{
         "email" => "brian@example.com",
@@ -613,8 +693,8 @@ defmodule OpenIDConnectTest do
       jwk = JOSE.JWK.from(jwks)
       {_, jwk_pubkey} = JOSE.JWK.to_public_map(jwk)
 
-      {_bypass, uri} = start_fixture("vault", %{"jwks" => jwk_pubkey})
-      config = %{@config | discovery_document_uri: uri}
+      {test_name, uri} = start_fixture("vault", %{"jwks" => jwk_pubkey})
+      config = %{@config | discovery_document_uri: uri, req_options: req_test_options(test_name)}
 
       claims = %{
         "email" => "brian@example.com",
@@ -634,8 +714,8 @@ defmodule OpenIDConnectTest do
       jwk = JOSE.JWK.from(jwks)
       {_, jwk_pubkey} = JOSE.JWK.to_public_map(jwk)
 
-      {_bypass, uri} = start_fixture("vault", %{"jwks" => jwk_pubkey})
-      config = %{@config | discovery_document_uri: uri}
+      {test_name, uri} = start_fixture("vault", %{"jwks" => jwk_pubkey})
+      config = %{@config | discovery_document_uri: uri, req_options: req_test_options(test_name)}
 
       claims = %{"email" => "brian@example.com"}
 
@@ -650,11 +730,14 @@ defmodule OpenIDConnectTest do
     test "returns error when document is not available" do
       {jwks, []} = Code.eval_file("test/fixtures/jwks/jwk.exs")
 
-      bypass = Bypass.open()
-      uri = "http://localhost:#{bypass.port}/.well-known/discovery-document.json"
-      Bypass.down(bypass)
+      test_name = unique_test_name()
+      uri = "http://#{test_name}/.well-known/discovery-document.json"
 
-      config = %{@config | discovery_document_uri: uri}
+      Req.Test.stub(test_name, fn conn ->
+        Req.Test.transport_error(conn, :econnrefused)
+      end)
+
+      config = %{@config | discovery_document_uri: uri, req_options: req_test_options(test_name)}
 
       claims = %{"email" => "brian@example.com"}
 
@@ -671,40 +754,33 @@ defmodule OpenIDConnectTest do
 
   describe "fetch_userinfo/2" do
     test "returns user info using endpoint from discovery document" do
-      bypass = Bypass.open()
       test_pid = self()
 
       {
         userinfo_status_code,
         userinfo_response_attrs,
-        userinfo_response_headers
+        _userinfo_response_headers
       } = load_fixture("google", "userinfo")
-
-      Bypass.expect_once(bypass, "GET", "/userinfo", fn conn ->
-        {:ok, body, conn} = Plug.Conn.read_body(conn)
-
-        conn =
-          Enum.reduce(userinfo_response_headers, conn, fn {k, v}, conn ->
-            Plug.Conn.put_resp_header(conn, k, v)
-          end)
-
-        send(test_pid, {:req, body, conn.req_headers})
-        Plug.Conn.resp(conn, userinfo_status_code, JSON.encode!(userinfo_response_attrs))
-      end)
-
-      userinfo_endpoint = "http://localhost:#{bypass.port}/userinfo"
 
       {jwks, []} = Code.eval_file("test/fixtures/jwks/jwk.exs")
       jwk = JOSE.JWK.from(jwks)
       {_, jwk_pubkey} = JOSE.JWK.to_public_map(jwk)
 
-      {_bypass, uri} =
-        start_fixture("vault", %{
-          "jwks" => jwk_pubkey,
-          "userinfo_endpoint" => userinfo_endpoint
+      userinfo_handler = fn conn ->
+        {:ok, body, conn} = Plug.Conn.read_body(conn)
+        send(test_pid, {:req, body, conn.req_headers})
+
+        conn
+        |> Plug.Conn.put_status(userinfo_status_code)
+        |> Req.Test.json(userinfo_response_attrs)
+      end
+
+      {test_name, uri} =
+        start_fixture_with_routes("vault", %{"jwks" => jwk_pubkey}, %{
+          {"GET", "/userinfo"} => userinfo_handler
         })
 
-      config = %{@config | discovery_document_uri: uri}
+      config = %{@config | discovery_document_uri: uri, req_options: req_test_options(test_name)}
 
       claims = %{"email" => userinfo_response_attrs["email"]}
 
@@ -726,13 +802,13 @@ defmodule OpenIDConnectTest do
       jwk = JOSE.JWK.from(jwks)
       {_, jwk_pubkey} = JOSE.JWK.to_public_map(jwk)
 
-      {_bypass, uri} =
+      {test_name, uri} =
         start_fixture("vault", %{
           "jwks" => jwk_pubkey,
           "userinfo_endpoint" => nil
         })
 
-      config = %{@config | discovery_document_uri: uri}
+      config = %{@config | discovery_document_uri: uri, req_options: req_test_options(test_name)}
 
       claims = %{"email" => "foo@john.com"}
 
@@ -745,21 +821,20 @@ defmodule OpenIDConnectTest do
     end
 
     test "returns error when userinfo endpoint is not available" do
-      bypass = Bypass.open()
-      userinfo_endpoint = "http://localhost:#{bypass.port}/userinfo"
-      Bypass.down(bypass)
-
       {jwks, []} = Code.eval_file("test/fixtures/jwks/jwk.exs")
       jwk = JOSE.JWK.from(jwks)
       {_, jwk_pubkey} = JOSE.JWK.to_public_map(jwk)
 
-      {_bypass, uri} =
-        start_fixture("vault", %{
-          "jwks" => jwk_pubkey,
-          "userinfo_endpoint" => userinfo_endpoint
+      error_handler = fn conn ->
+        Req.Test.transport_error(conn, :econnrefused)
+      end
+
+      {test_name, uri} =
+        start_fixture_with_routes("vault", %{"jwks" => jwk_pubkey}, %{
+          {"GET", "/userinfo"} => error_handler
         })
 
-      config = %{@config | discovery_document_uri: uri}
+      config = %{@config | discovery_document_uri: uri, req_options: req_test_options(test_name)}
 
       claims = %{"email" => "foo@john.com"}
 
@@ -773,24 +848,20 @@ defmodule OpenIDConnectTest do
     end
 
     test "returns error when userinfo endpoint returns non-2XX status" do
-      bypass = Bypass.open()
-      userinfo_endpoint = "http://localhost:#{bypass.port}/userinfo"
-
-      Bypass.expect_once(bypass, "GET", "/userinfo", fn conn ->
-        Plug.Conn.resp(conn, 401, "Unauthorized")
-      end)
-
       {jwks, []} = Code.eval_file("test/fixtures/jwks/jwk.exs")
       jwk = JOSE.JWK.from(jwks)
       {_, jwk_pubkey} = JOSE.JWK.to_public_map(jwk)
 
-      {_bypass, uri} =
-        start_fixture("vault", %{
-          "jwks" => jwk_pubkey,
-          "userinfo_endpoint" => userinfo_endpoint
+      error_handler = fn conn ->
+        conn |> Plug.Conn.put_status(401) |> Req.Test.text("Unauthorized")
+      end
+
+      {test_name, uri} =
+        start_fixture_with_routes("vault", %{"jwks" => jwk_pubkey}, %{
+          {"GET", "/userinfo"} => error_handler
         })
 
-      config = %{@config | discovery_document_uri: uri}
+      config = %{@config | discovery_document_uri: uri, req_options: req_test_options(test_name)}
 
       claims = %{"email" => "foo@john.com"}
 

@@ -72,14 +72,16 @@ defmodule OpenIDConnect.Mixfile do
       {:req, "~> 0.5"},
       {:jose, "~> 1.11"},
 
-      # Test deps
+      # Dev deps
       {:earmark, "~> 1.2", only: :dev},
       {:credo, "~> 1.6", only: :dev},
       {:dialyxir, "~> 1.2", only: :dev},
       {:ex_doc, "~> 0.18", only: :dev},
-      {:excoveralls, "~> 0.14", only: :test},
-      {:plug_cowboy, "~> 2.6", only: :test},
-      {:bypass, "~> 2.1", only: :test}
+
+      # Test deps
+      # Plug is required for Req.Test (optional in Req, but needed for test stubs)
+      {:plug, "~> 1.0", only: :test},
+      {:excoveralls, "~> 0.14", only: :test}
     ]
   end
 end

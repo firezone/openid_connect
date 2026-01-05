@@ -96,29 +96,33 @@ defmodule OpenIDConnect.Document do
 
   defp body_collector(max_byte_size) do
     fn {:data, data}, {req, resp} ->
-      current_body =
-        case resp.body do
-          nil -> {:ok, []}
-          "" -> {:ok, []}
-          {:ok, _} = ok -> ok
-          {:error, _} = error -> error
-        end
-
-      case current_body do
-        {:error, _} = error ->
-          {:cont, {req, %{resp | body: error}}}
-
-        {:ok, acc} ->
-          new_size = IO.iodata_length(acc) + byte_size(data)
-
-          if new_size > max_byte_size do
-            {:halt, {req, %{resp | body: {:error, :body_too_large}}}}
-          else
-            {:cont, {req, %{resp | body: {:ok, [acc, data]}}}}
-          end
-      end
+      {action, body} = collect_body_chunk(resp.body, data, max_byte_size)
+      {action, {req, %{resp | body: body}}}
     end
   end
+
+  defp collect_body_chunk(body, data, max_byte_size) do
+    acc = normalize_body_acc(body)
+
+    case acc do
+      {:error, _} = error ->
+        {:cont, error}
+
+      {:ok, chunks} ->
+        new_size = IO.iodata_length(chunks) + byte_size(data)
+
+        if new_size > max_byte_size do
+          {:halt, {:error, :body_too_large}}
+        else
+          {:cont, {:ok, [chunks, data]}}
+        end
+    end
+  end
+
+  defp normalize_body_acc(nil), do: {:ok, []}
+  defp normalize_body_acc(""), do: {:ok, []}
+  defp normalize_body_acc({:ok, _} = ok), do: ok
+  defp normalize_body_acc({:error, _} = error), do: error
 
   defp remaining_lifetime(headers) do
     max_age = get_max_age(headers)

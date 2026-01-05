@@ -79,7 +79,7 @@ defmodule OpenIDConnect.Document do
   defp read_response(uri) do
     collector = body_collector(@document_max_byte_size)
 
-    case Req.get(uri, into: collector, retry: retry_enabled?()) do
+    case Req.get(uri, into: collector, retry: retry_option()) do
       {:ok, %{body: {:error, :body_too_large}}} ->
         {:error, :discovery_document_is_too_large}
 
@@ -199,7 +199,7 @@ defmodule OpenIDConnect.Document do
     _ -> {:error, :invalid_jwks_certificates}
   end
 
-  defp retry_enabled? do
-    Application.get_env(:openid_connect, :retry_enabled, true)
+  defp retry_option do
+    Application.get_env(:openid_connect, :retry, :safe_transient)
   end
 end

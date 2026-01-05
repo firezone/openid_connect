@@ -189,7 +189,7 @@ defmodule OpenIDConnect do
 
     with {:ok, document} <- Document.fetch_document(discovery_document_uri),
          {:ok, %{status: status, body: body}} when status in 200..299 <-
-           Req.post(document.token_endpoint, form: form_params, retry: retry_enabled?()) do
+           Req.post(document.token_endpoint, form: form_params, retry: retry_option()) do
       {:ok, decode_body(body)}
     else
       {:ok, %{status: status, body: body}} -> {:error, {status, decode_body(body)}}
@@ -318,7 +318,7 @@ defmodule OpenIDConnect do
     with {:ok, document} <- Document.fetch_document(discovery_document_uri),
          true <- not is_nil(document.userinfo_endpoint),
          {:ok, %{status: status, body: body}} when status in 200..299 <-
-           Req.get(document.userinfo_endpoint, headers: headers, retry: retry_enabled?()) do
+           Req.get(document.userinfo_endpoint, headers: headers, retry: retry_option()) do
       {:ok, decode_body(body)}
     else
       {:ok, %{status: status, body: body}} -> {:error, {status, decode_body(body)}}
@@ -344,7 +344,7 @@ defmodule OpenIDConnect do
     |> URI.to_string()
   end
 
-  defp retry_enabled? do
-    Application.get_env(:openid_connect, :retry_enabled, true)
+  defp retry_option do
+    Application.get_env(:openid_connect, :retry, :safe_transient)
   end
 end

@@ -327,6 +327,7 @@ defmodule OpenIDConnect do
     end
   end
 
+  defp decode_body(nil), do: nil
   defp decode_body(body) when is_map(body), do: body
 
   defp decode_body(body) when is_binary(body) do

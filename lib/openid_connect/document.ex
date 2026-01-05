@@ -86,6 +86,7 @@ defmodule OpenIDConnect.Document do
       {:ok, %{body: {:ok, body}} = response} ->
         {:ok, %{response | body: IO.iodata_to_binary(body)}}
 
+      # Fallback for empty responses or when body_collector was never invoked
       {:ok, response} ->
         {:ok, response}
 
@@ -119,10 +120,9 @@ defmodule OpenIDConnect.Document do
     end
   end
 
-  defp normalize_body_acc(nil), do: {:ok, []}
-  defp normalize_body_acc(""), do: {:ok, []}
   defp normalize_body_acc({:ok, _} = ok), do: ok
   defp normalize_body_acc({:error, _} = error), do: error
+  defp normalize_body_acc(_), do: {:ok, []}
 
   defp remaining_lifetime(headers) do
     max_age = get_max_age(headers)
@@ -135,7 +135,8 @@ defmodule OpenIDConnect.Document do
     end
   end
 
-  # Req returns headers as %{"header-name" => ["value1", "value2"]}
+  # Req returns headers as %{"header-name" => ["value1", "value2"]}.
+  # The binary fallback handles Plug/Bypass test fixtures which use single string values.
   defp get_header(headers, name) do
     case Map.get(headers, name) do
       nil -> nil

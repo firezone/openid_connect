@@ -183,16 +183,13 @@ defmodule OpenIDConnect do
   def fetch_tokens(config, params) do
     discovery_document_uri = config.discovery_document_uri
 
-    form_body =
+    form_params =
       %{client_id: config.client_id, client_secret: config.client_secret}
       |> Map.merge(params)
-      |> URI.encode_query(:www_form)
-
-    headers = [{"Content-Type", "application/x-www-form-urlencoded"}]
 
     with {:ok, document} <- Document.fetch_document(discovery_document_uri),
          {:ok, %{status: status, body: body}} when status in 200..299 <-
-           Req.post(document.token_endpoint, headers: headers, body: form_body, retry: retry_enabled?()) do
+           Req.post(document.token_endpoint, form: form_params, retry: retry_enabled?()) do
       {:ok, decode_body(body)}
     else
       {:ok, %{status: status, body: body}} -> {:error, {status, decode_body(body)}}

@@ -121,7 +121,6 @@ defmodule OpenIDConnect.Document do
   end
 
   defp remaining_lifetime(headers) do
-    headers = normalize_headers(headers)
     max_age = get_max_age(headers)
     age = get_age(headers)
 
@@ -132,26 +131,30 @@ defmodule OpenIDConnect.Document do
     end
   end
 
-  defp normalize_headers(headers) do
-    for {k, v} <- headers, into: %{} do
-      {String.downcase(k), normalize_header_value(v)}
+  # Req returns headers as %{"header-name" => ["value1", "value2"]}
+  defp get_header(headers, name) do
+    case Map.get(headers, name) do
+      nil -> nil
+      [value | _] -> value
+      value when is_binary(value) -> value
     end
   end
 
-  defp normalize_header_value(values) when is_list(values), do: Enum.join(values, ", ")
-  defp normalize_header_value(value) when is_binary(value), do: value
+  defp get_max_age(headers) do
+    case get_header(headers, "cache-control") do
+      nil ->
+        nil
 
-  defp get_max_age(headers) when is_map(headers) do
-    cache_control = Map.get(headers, "cache-control", "")
-
-    case Regex.run(~r"(?<=max-age=)\d+", cache_control) do
-      [max_age] -> String.to_integer(max_age)
-      _ -> nil
+      cache_control ->
+        case Regex.run(~r"(?<=max-age=)\d+", cache_control) do
+          [max_age] -> String.to_integer(max_age)
+          _ -> nil
+        end
     end
   end
 
-  defp get_age(headers) when is_map(headers) do
-    case Map.get(headers, "age") do
+  defp get_age(headers) do
+    case get_header(headers, "age") do
       nil -> nil
       age -> String.to_integer(age)
     end

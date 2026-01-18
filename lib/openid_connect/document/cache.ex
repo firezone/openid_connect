@@ -26,6 +26,10 @@ defmodule OpenIDConnect.Document.Cache do
     GenServer.call(pid, :flush)
   end
 
+  def clear(pid \\ __MODULE__) do
+    GenServer.call(pid, :clear)
+  end
+
   def handle_cast({:put, uri, document}, state) do
     if document_expired?(document) do
       {:noreply, state}
@@ -39,6 +43,14 @@ defmodule OpenIDConnect.Document.Cache do
 
   def handle_call(:flush, _from, state) do
     {:reply, state, state}
+  end
+
+  def handle_call(:clear, _from, state) do
+    for {_uri, {timer_ref, _last_fetched_at, _document}} <- state do
+      Process.cancel_timer(timer_ref)
+    end
+
+    {:reply, :ok, %{}}
   end
 
   def handle_call({:fetch, uri}, _from, state) do

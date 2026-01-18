@@ -11,13 +11,13 @@ defmodule OpenIDConnectTest do
     client_secret: "CLIENT_SECRET",
     response_type: "code id_token token",
     scope: "openid email profile",
-    req_options: []
+    req_opts: []
   }
 
   describe "authorization_uri/3" do
     test "generates authorization url with scope and response_type as binaries" do
       {test_name, uri} = start_fixture("google")
-      config = %{@config | discovery_document_uri: uri, req_options: req_test_options(test_name)}
+      config = %{@config | discovery_document_uri: uri, req_opts: req_test_options(test_name)}
 
       assert {:ok, url} = authorization_uri(config, @redirect_uri)
       assert url =~ "https://accounts.google.com/o/oauth2/v2/auth?"
@@ -34,7 +34,7 @@ defmodule OpenIDConnectTest do
         @config
         | discovery_document_uri: uri,
           scope: ["openid", "email", "profile"],
-          req_options: req_test_options(test_name)
+          req_opts: req_test_options(test_name)
       }
 
       assert {:ok, url} = authorization_uri(config, @redirect_uri)
@@ -52,7 +52,7 @@ defmodule OpenIDConnectTest do
         @config
         | discovery_document_uri: uri,
           response_type: ["code", "id_token", "token"],
-          req_options: req_test_options(test_name)
+          req_opts: req_test_options(test_name)
       }
 
       assert {:ok, url} = authorization_uri(config, @redirect_uri)
@@ -71,7 +71,7 @@ defmodule OpenIDConnectTest do
         @config
         | discovery_document_uri: uri,
           scope: nil,
-          req_options: req_test_options(test_name)
+          req_opts: req_test_options(test_name)
       }
 
       assert authorization_uri(config, @redirect_uri) == {:error, :invalid_scope}
@@ -80,7 +80,7 @@ defmodule OpenIDConnectTest do
         @config
         | discovery_document_uri: uri,
           scope: "",
-          req_options: req_test_options(test_name)
+          req_opts: req_test_options(test_name)
       }
 
       assert authorization_uri(config, @redirect_uri) == {:error, :invalid_scope}
@@ -89,7 +89,7 @@ defmodule OpenIDConnectTest do
         @config
         | discovery_document_uri: uri,
           scope: [],
-          req_options: req_test_options(test_name)
+          req_opts: req_test_options(test_name)
       }
 
       assert authorization_uri(config, @redirect_uri) == {:error, :invalid_scope}
@@ -102,7 +102,7 @@ defmodule OpenIDConnectTest do
         @config
         | discovery_document_uri: uri,
           response_type: nil,
-          req_options: req_test_options(test_name)
+          req_opts: req_test_options(test_name)
       }
 
       assert authorization_uri(config, @redirect_uri) == {:error, :invalid_response_type}
@@ -111,7 +111,7 @@ defmodule OpenIDConnectTest do
         @config
         | discovery_document_uri: uri,
           response_type: "",
-          req_options: req_test_options(test_name)
+          req_opts: req_test_options(test_name)
       }
 
       assert authorization_uri(config, @redirect_uri) == {:error, :invalid_response_type}
@@ -120,7 +120,7 @@ defmodule OpenIDConnectTest do
         @config
         | discovery_document_uri: uri,
           response_type: [],
-          req_options: req_test_options(test_name)
+          req_opts: req_test_options(test_name)
       }
 
       assert authorization_uri(config, @redirect_uri) == {:error, :invalid_response_type}
@@ -128,7 +128,7 @@ defmodule OpenIDConnectTest do
 
     test "adds optional params" do
       {test_name, uri} = start_fixture("google")
-      config = %{@config | discovery_document_uri: uri, req_options: req_test_options(test_name)}
+      config = %{@config | discovery_document_uri: uri, req_opts: req_test_options(test_name)}
 
       assert {:ok, url} = authorization_uri(config, @redirect_uri, %{"state" => "foo"})
 
@@ -142,7 +142,7 @@ defmodule OpenIDConnectTest do
 
     test "params can override default values" do
       {test_name, uri} = start_fixture("google")
-      config = %{@config | discovery_document_uri: uri, req_options: req_test_options(test_name)}
+      config = %{@config | discovery_document_uri: uri, req_opts: req_test_options(test_name)}
 
       assert {:ok, url} = authorization_uri(config, @redirect_uri, %{client_id: "foo"})
       assert url =~ "https://accounts.google.com/o/oauth2/v2/auth?"
@@ -160,7 +160,7 @@ defmodule OpenIDConnectTest do
         Req.Test.transport_error(conn, :econnrefused)
       end)
 
-      config = %{@config | discovery_document_uri: uri, req_options: req_test_options(test_name)}
+      config = %{@config | discovery_document_uri: uri, req_opts: req_test_options(test_name)}
 
       assert authorization_uri(config, @redirect_uri, %{client_id: "foo"}) ==
                {:error, %Req.TransportError{reason: :econnrefused}}
@@ -170,14 +170,14 @@ defmodule OpenIDConnectTest do
   describe "end_session_uri/2" do
     test "returns error when provider doesn't specify end_session_endpoint" do
       {test_name, uri} = start_fixture("google")
-      config = %{@config | discovery_document_uri: uri, req_options: req_test_options(test_name)}
+      config = %{@config | discovery_document_uri: uri, req_opts: req_test_options(test_name)}
 
       assert end_session_uri(config) == {:error, :endpoint_not_set}
     end
 
     test "generates authorization url" do
       {test_name, uri} = start_fixture("okta")
-      config = %{@config | discovery_document_uri: uri, req_options: req_test_options(test_name)}
+      config = %{@config | discovery_document_uri: uri, req_opts: req_test_options(test_name)}
 
       assert end_session_uri(config) ==
                {:ok, "https://common.okta.com/oauth2/v1/logout?client_id=CLIENT_ID"}
@@ -185,7 +185,7 @@ defmodule OpenIDConnectTest do
 
     test "adds optional params" do
       {test_name, uri} = start_fixture("okta")
-      config = %{@config | discovery_document_uri: uri, req_options: req_test_options(test_name)}
+      config = %{@config | discovery_document_uri: uri, req_opts: req_test_options(test_name)}
 
       assert end_session_uri(config, %{"state" => "foo"}) ==
                {:ok, "https://common.okta.com/oauth2/v1/logout?client_id=CLIENT_ID&state=foo"}
@@ -193,7 +193,7 @@ defmodule OpenIDConnectTest do
 
     test "params can override default values" do
       {test_name, uri} = start_fixture("okta")
-      config = %{@config | discovery_document_uri: uri, req_options: req_test_options(test_name)}
+      config = %{@config | discovery_document_uri: uri, req_opts: req_test_options(test_name)}
 
       assert end_session_uri(config, %{client_id: "foo"}) ==
                {:ok, "https://common.okta.com/oauth2/v1/logout?client_id=foo"}
@@ -207,7 +207,7 @@ defmodule OpenIDConnectTest do
         Req.Test.transport_error(conn, :econnrefused)
       end)
 
-      config = %{@config | discovery_document_uri: uri, req_options: req_test_options(test_name)}
+      config = %{@config | discovery_document_uri: uri, req_opts: req_test_options(test_name)}
 
       assert end_session_uri(config, %{client_id: "foo"}) ==
                {:error, %Req.TransportError{reason: :econnrefused}}
@@ -233,7 +233,7 @@ defmodule OpenIDConnectTest do
       {test_name, uri} =
         start_fixture_with_routes("google", %{}, %{{"POST", "/token"} => token_handler})
 
-      config = %{@config | discovery_document_uri: uri, req_options: req_test_options(test_name)}
+      config = %{@config | discovery_document_uri: uri, req_opts: req_test_options(test_name)}
 
       params = %{
         grant_type: "authorization_code",
@@ -271,7 +271,7 @@ defmodule OpenIDConnectTest do
       {test_name, uri} =
         start_fixture_with_routes("google", %{}, %{{"POST", "/token"} => token_handler})
 
-      config = %{@config | discovery_document_uri: uri, req_options: req_test_options(test_name)}
+      config = %{@config | discovery_document_uri: uri, req_opts: req_test_options(test_name)}
 
       fetch_tokens(config, %{
         client_id: "foo",
@@ -304,7 +304,7 @@ defmodule OpenIDConnectTest do
       {test_name, uri} =
         start_fixture_with_routes("google", %{}, %{{"POST", "/token"} => token_handler})
 
-      config = %{@config | discovery_document_uri: uri, req_options: req_test_options(test_name)}
+      config = %{@config | discovery_document_uri: uri, req_opts: req_test_options(test_name)}
 
       fetch_tokens(config, %{grant_type: "refresh_token", refresh_token: "foo"})
 
@@ -323,7 +323,7 @@ defmodule OpenIDConnectTest do
       {test_name, uri} =
         start_fixture_with_routes("google", %{}, %{{"POST", "/token"} => error_handler})
 
-      config = %{@config | discovery_document_uri: uri, req_options: req_test_options(test_name)}
+      config = %{@config | discovery_document_uri: uri, req_opts: req_test_options(test_name)}
       params = %{grant_type: "authorization_code", redirect_uri: @redirect_uri}
 
       assert fetch_tokens(config, params) ==
@@ -340,7 +340,7 @@ defmodule OpenIDConnectTest do
       {test_name, uri} =
         start_fixture_with_routes("google", %{}, %{{"POST", "/token"} => error_handler})
 
-      config = %{@config | discovery_document_uri: uri, req_options: req_test_options(test_name)}
+      config = %{@config | discovery_document_uri: uri, req_opts: req_test_options(test_name)}
 
       assert fetch_tokens(config, %{}) ==
                {:error, {401, %{"error" => "unauthorized"}}}
@@ -359,7 +359,7 @@ defmodule OpenIDConnectTest do
       {test_name, uri} =
         start_fixture_with_routes("google", %{}, %{{"POST", "/token"} => google_error_handler})
 
-      config = %{@config | discovery_document_uri: uri, req_options: req_test_options(test_name)}
+      config = %{@config | discovery_document_uri: uri, req_opts: req_test_options(test_name)}
 
       assert {:error, {401, resp}} =
                fetch_tokens(config, %{
@@ -386,7 +386,7 @@ defmodule OpenIDConnectTest do
         config = %{
           @config
           | discovery_document_uri: uri,
-            req_options: req_test_options(test_name)
+            req_opts: req_test_options(test_name)
         }
 
         assert {:error, {status, _resp}} =
@@ -408,7 +408,7 @@ defmodule OpenIDConnectTest do
         Req.Test.transport_error(conn, :econnrefused)
       end)
 
-      config = %{@config | discovery_document_uri: uri, req_options: req_test_options(test_name)}
+      config = %{@config | discovery_document_uri: uri, req_opts: req_test_options(test_name)}
 
       params = %{
         grant_type: "authorization_code",
@@ -470,7 +470,7 @@ defmodule OpenIDConnectTest do
 
     test "returns error when token is valid but invalid for a provider" do
       {test_name, uri} = start_fixture("okta")
-      config = %{@config | discovery_document_uri: uri, req_options: req_test_options(test_name)}
+      config = %{@config | discovery_document_uri: uri, req_opts: req_test_options(test_name)}
       {jwk, []} = Code.eval_file("test/fixtures/jwks/jwk.exs")
 
       claims = %{"email" => "brian@example.com"}
@@ -490,7 +490,7 @@ defmodule OpenIDConnectTest do
       {_, jwk_pubkey} = JOSE.JWK.to_public_map(jwk)
 
       {test_name, uri} = start_fixture("vault", %{"jwks" => jwk_pubkey})
-      config = %{@config | discovery_document_uri: uri, req_options: req_test_options(test_name)}
+      config = %{@config | discovery_document_uri: uri, req_opts: req_test_options(test_name)}
 
       claims = %{
         "email" => "brian@example.com",
@@ -512,7 +512,7 @@ defmodule OpenIDConnectTest do
       {_, jwk_pubkey} = JOSE.JWK.to_public_map(jwk)
 
       {test_name, uri} = start_fixture("vault", %{"jwks" => jwk_pubkey})
-      config = %{@config | discovery_document_uri: uri, req_options: req_test_options(test_name)}
+      config = %{@config | discovery_document_uri: uri, req_opts: req_test_options(test_name)}
 
       claims = %{
         "email" => "brian@example.com",
@@ -540,7 +540,7 @@ defmodule OpenIDConnectTest do
       {_, jwk_pubkey} = JOSE.JWK.to_public_map(jwk)
 
       {test_name, uri} = start_fixture("vault", %{"jwks" => jwk_pubkey})
-      config = %{@config | discovery_document_uri: uri, req_options: req_test_options(test_name)}
+      config = %{@config | discovery_document_uri: uri, req_opts: req_test_options(test_name)}
 
       claims = %{
         "email" => "brian@example.com",
@@ -582,7 +582,7 @@ defmodule OpenIDConnectTest do
       {jwk, []} = Code.eval_file("test/fixtures/jwks/jwk.exs")
 
       {test_name, uri} = start_fixture("vault", %{"jwks" => jwks})
-      config = %{@config | discovery_document_uri: uri, req_options: req_test_options(test_name)}
+      config = %{@config | discovery_document_uri: uri, req_opts: req_test_options(test_name)}
 
       claims = %{
         "email" => "brian@example.com",
@@ -604,7 +604,7 @@ defmodule OpenIDConnectTest do
       {_, jwk_pubkey} = JOSE.JWK.to_public_map(jwk)
 
       {test_name, uri} = start_fixture("vault", %{"jwks" => jwk_pubkey})
-      config = %{@config | discovery_document_uri: uri, req_options: req_test_options(test_name)}
+      config = %{@config | discovery_document_uri: uri, req_opts: req_test_options(test_name)}
 
       claims = %{
         "email" => "brian@example.com",
@@ -627,7 +627,7 @@ defmodule OpenIDConnectTest do
       {_, jwk_pubkey} = JOSE.JWK.to_public_map(jwk)
 
       {test_name, uri} = start_fixture("vault", %{"jwks" => jwk_pubkey})
-      config = %{@config | discovery_document_uri: uri, req_options: req_test_options(test_name)}
+      config = %{@config | discovery_document_uri: uri, req_opts: req_test_options(test_name)}
 
       claims = %{
         "email" => "brian@example.com",
@@ -648,7 +648,7 @@ defmodule OpenIDConnectTest do
       {_, jwk_pubkey} = JOSE.JWK.to_public_map(jwk)
 
       {test_name, uri} = start_fixture("vault", %{"jwks" => jwk_pubkey})
-      config = %{@config | discovery_document_uri: uri, req_options: req_test_options(test_name)}
+      config = %{@config | discovery_document_uri: uri, req_opts: req_test_options(test_name)}
 
       claims = %{
         "email" => "brian@example.com",
@@ -670,7 +670,7 @@ defmodule OpenIDConnectTest do
       {_, jwk_pubkey} = JOSE.JWK.to_public_map(jwk)
 
       {test_name, uri} = start_fixture("vault", %{"jwks" => jwk_pubkey})
-      config = %{@config | discovery_document_uri: uri, req_options: req_test_options(test_name)}
+      config = %{@config | discovery_document_uri: uri, req_opts: req_test_options(test_name)}
 
       claims = %{
         "email" => "brian@example.com",
@@ -694,7 +694,7 @@ defmodule OpenIDConnectTest do
       {_, jwk_pubkey} = JOSE.JWK.to_public_map(jwk)
 
       {test_name, uri} = start_fixture("vault", %{"jwks" => jwk_pubkey})
-      config = %{@config | discovery_document_uri: uri, req_options: req_test_options(test_name)}
+      config = %{@config | discovery_document_uri: uri, req_opts: req_test_options(test_name)}
 
       claims = %{
         "email" => "brian@example.com",
@@ -715,7 +715,7 @@ defmodule OpenIDConnectTest do
       {_, jwk_pubkey} = JOSE.JWK.to_public_map(jwk)
 
       {test_name, uri} = start_fixture("vault", %{"jwks" => jwk_pubkey})
-      config = %{@config | discovery_document_uri: uri, req_options: req_test_options(test_name)}
+      config = %{@config | discovery_document_uri: uri, req_opts: req_test_options(test_name)}
 
       claims = %{"email" => "brian@example.com"}
 
@@ -737,7 +737,7 @@ defmodule OpenIDConnectTest do
         Req.Test.transport_error(conn, :econnrefused)
       end)
 
-      config = %{@config | discovery_document_uri: uri, req_options: req_test_options(test_name)}
+      config = %{@config | discovery_document_uri: uri, req_opts: req_test_options(test_name)}
 
       claims = %{"email" => "brian@example.com"}
 
@@ -780,7 +780,7 @@ defmodule OpenIDConnectTest do
           {"GET", "/userinfo"} => userinfo_handler
         })
 
-      config = %{@config | discovery_document_uri: uri, req_options: req_test_options(test_name)}
+      config = %{@config | discovery_document_uri: uri, req_opts: req_test_options(test_name)}
 
       claims = %{"email" => userinfo_response_attrs["email"]}
 
@@ -808,7 +808,7 @@ defmodule OpenIDConnectTest do
           "userinfo_endpoint" => nil
         })
 
-      config = %{@config | discovery_document_uri: uri, req_options: req_test_options(test_name)}
+      config = %{@config | discovery_document_uri: uri, req_opts: req_test_options(test_name)}
 
       claims = %{"email" => "foo@john.com"}
 
@@ -834,7 +834,7 @@ defmodule OpenIDConnectTest do
           {"GET", "/userinfo"} => error_handler
         })
 
-      config = %{@config | discovery_document_uri: uri, req_options: req_test_options(test_name)}
+      config = %{@config | discovery_document_uri: uri, req_opts: req_test_options(test_name)}
 
       claims = %{"email" => "foo@john.com"}
 
@@ -861,7 +861,7 @@ defmodule OpenIDConnectTest do
           {"GET", "/userinfo"} => error_handler
         })
 
-      config = %{@config | discovery_document_uri: uri, req_options: req_test_options(test_name)}
+      config = %{@config | discovery_document_uri: uri, req_opts: req_test_options(test_name)}
 
       claims = %{"email" => "foo@john.com"}
 

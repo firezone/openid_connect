@@ -96,6 +96,40 @@ defmodule OpenIDConnect.Document.CacheTest do
     end
   end
 
+  describe "clear/1" do
+    test "clears the cache and returns :ok" do
+      {:ok, pid} = start_link(name: :clear_test1)
+      document = %{@valid_document | expires_at: DateTime.utc_now() |> DateTime.add(60, :second)}
+
+      put(pid, uniq_uri(), document)
+      put(pid, uniq_uri(), document)
+
+      assert Enum.count(flush(pid)) == 2
+      assert clear(pid) == :ok
+      assert flush(pid) == %{}
+    end
+
+    test "cancels all scheduled timers" do
+      {:ok, pid} = start_link(name: :clear_test2)
+      uri = uniq_uri()
+      document = %{@valid_document | expires_at: DateTime.utc_now() |> DateTime.add(60, :second)}
+
+      put(pid, uri, document)
+
+      assert %{^uri => {timer_ref, _last_fetched_at, _document}} = flush(pid)
+      assert Process.read_timer(timer_ref)
+
+      assert clear(pid) == :ok
+      assert Process.read_timer(timer_ref) == false
+    end
+
+    test "works on an empty cache" do
+      {:ok, pid} = start_link(name: :clear_test3)
+      assert clear(pid) == :ok
+      assert flush(pid) == %{}
+    end
+  end
+
   describe ":gc" do
     test "doesn't do anything when cache is empty" do
       {:ok, pid} = start_link(name: :gc_test1)

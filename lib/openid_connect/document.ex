@@ -1,5 +1,5 @@
 defmodule OpenIDConnect.Document do
-  @doc """
+  @moduledoc """
   This module caches OIDC documents and their JWKs for a limited timeframe, which is min(`@refresh_time`, `document.remaining_lifetime`).
   """
   alias OpenIDConnect.Document.Cache
@@ -26,9 +26,16 @@ defmodule OpenIDConnect.Document do
                             1024 * 1024
                           )
 
+  @doc "Returns the cached document for `uri`, fetching and caching it on a cache miss."
   def fetch_document(uri, req_opts \\ []) do
-    with :error <- Cache.fetch(uri),
-         {:ok, document_json, document_expires_at} <- fetch_remote_resource(uri, req_opts),
+    with :error <- Cache.fetch(uri) do
+      refresh_document(uri, req_opts)
+    end
+  end
+
+  @doc "Fetches a fresh document bypassing the cache. Replaces the cached entry only on success."
+  def refresh_document(uri, req_opts \\ []) do
+    with {:ok, document_json, document_expires_at} <- fetch_remote_resource(uri, req_opts),
          {:ok, document} <- build_document(document_json),
          {:ok, jwks_json, jwks_expires_at} <-
            fetch_remote_resource(document_json["jwks_uri"], req_opts),
@@ -50,7 +57,7 @@ defmodule OpenIDConnect.Document do
           expires_at: expires_at
       }
 
-      _ = Cache.put(uri, document)
+      Cache.put(uri, document)
 
       {:ok, document}
     end
@@ -171,10 +178,9 @@ defmodule OpenIDConnect.Document do
   end
 
   defp build_document(document_json) do
-    keys = Map.keys(document_json)
     required_keys = ["jwks_uri", "authorization_endpoint", "token_endpoint"]
 
-    if Enum.all?(required_keys, &(&1 in keys)) do
+    if Enum.all?(required_keys, &Map.has_key?(document_json, &1)) do
       document = %__MODULE__{
         raw: document_json,
         authorization_endpoint: Map.fetch!(document_json, "authorization_endpoint"),

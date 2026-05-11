@@ -3,6 +3,7 @@ defmodule OpenIDConnect do
   Handles a majority of the life-cycle concerns with [OpenID Connect](http://openid.net/connect/)
   """
   alias OpenIDConnect.Document
+  alias OpenIDConnect.Document.Cache
 
   @typedoc """
   URL to a [OpenID Discovery Document](https://openid.net/specs/openid-connect-discovery-1_0.html) endpoint.
@@ -216,10 +217,81 @@ defmodule OpenIDConnect do
     discovery_document_uri = config.discovery_document_uri
     req_opts = Map.get(config, :req_opts, [])
 
+    with {:ok, token_alg, token_kid} <- peek_token_header(jwt) do
+      verify_with_retry(config, jwt, token_alg, token_kid, discovery_document_uri, req_opts)
+    end
+  end
+
+  defp verify_with_retry(config, jwt, token_alg, token_kid, uri, req_opts) do
+    # Snapshot pre-call so we only retry when JWKS was cached (cold cache = already fresh).
+    pre_cached = Cache.peek(uri)
+
+    case do_verify(config, jwt, token_alg, uri, req_opts) do
+      {:error, {:invalid_jwt, "verification failed"}} = error ->
+        retry_verify(config, jwt, token_alg, token_kid, uri, req_opts, pre_cached, error)
+
+      result ->
+        result
+    end
+  end
+
+  # Refresh out-of-band so a failed refetch (provider unreachable) leaves the old
+  # cached JWKS intact for legitimate cached-key-signed tokens.
+  defp retry_verify(config, jwt, token_alg, token_kid, uri, req_opts, pre_cached, error) do
+    with true <- should_refresh_jwks?(token_kid, pre_cached),
+         {:ok, _fresh} <- Document.refresh_document(uri, req_opts) do
+      do_verify(config, jwt, token_alg, uri, req_opts)
+    else
+      _ -> error
+    end
+  end
+
+  # Only refresh on an unexpired cached doc whose JWKS lacks the token's kid —
+  # otherwise it's either a cold cache, a tampered token, or already refetched.
+  defp should_refresh_jwks?(kid, {:ok, %Document{jwks: jwks, expires_at: expires_at}})
+       when is_binary(kid) do
+    DateTime.compare(expires_at, DateTime.utc_now()) == :gt and not kid_in_jwks?(kid, jwks)
+  end
+
+  defp should_refresh_jwks?(_kid, _pre_cached), do: false
+
+  defp kid_in_jwks?(kid, %JOSE.JWK{keys: {:jose_jwk_set, jwks}}) do
+    Enum.any?(jwks, fn raw_jwk ->
+      raw_jwk |> JOSE.JWK.from() |> jwk_kid() == kid
+    end)
+  end
+
+  defp kid_in_jwks?(kid, %JOSE.JWK{} = jwk), do: jwk_kid(jwk) == kid
+  defp kid_in_jwks?(_kid, _jwks), do: false
+
+  defp jwk_kid(%JOSE.JWK{fields: fields}), do: Map.get(fields, "kid")
+  defp jwk_kid(_), do: nil
+
+  defp peek_token_header(jwt) do
     with {:ok, protected} <- peek_protected(jwt),
          {:ok, decoded_protected} <- JSON.decode(protected),
-         {:ok, token_alg} <- Map.fetch(decoded_protected, "alg"),
-         {:ok, document} <- Document.fetch_document(discovery_document_uri, req_opts),
+         {:ok, token_alg} <- Map.fetch(decoded_protected, "alg") do
+      {:ok, token_alg, Map.get(decoded_protected, "kid")}
+    else
+      {:error, {:unexpected_end, _position}} ->
+        {:error, {:invalid_jwt, "token header JSON is incomplete"}}
+
+      {:error, {:invalid_byte, _position, _byte}} ->
+        {:error, {:invalid_jwt, "token header contains invalid JSON"}}
+
+      {:error, {:unexpected_sequence, _position, _bytes}} ->
+        {:error, {:invalid_jwt, "token header contains invalid UTF-8 escape sequence"}}
+
+      {:error, :peek_protected} ->
+        {:error, {:invalid_jwt, "invalid token format"}}
+
+      :error ->
+        {:error, {:invalid_jwt, "no `alg` found in token"}}
+    end
+  end
+
+  defp do_verify(config, jwt, token_alg, discovery_document_uri, req_opts) do
+    with {:ok, document} <- Document.fetch_document(discovery_document_uri, req_opts),
          {true, claims, _jwk} <- verify_signature(document.jwks, token_alg, jwt),
          {:ok, unverified_claims} <- JSON.decode(claims),
          {:ok, verified_claims} <- verify_claims(unverified_claims, config) do
@@ -234,14 +306,8 @@ defmodule OpenIDConnect do
       {:error, {:unexpected_sequence, _position, _bytes}} ->
         {:error, {:invalid_jwt, "token claims contain invalid UTF-8 escape sequence"}}
 
-      {:error, :peek_protected} ->
-        {:error, {:invalid_jwt, "invalid token format"}}
-
       {:error, invalid_claim, message} ->
         {:error, {:invalid_jwt, "invalid #{invalid_claim} claim: #{message}"}}
-
-      :error ->
-        {:error, {:invalid_jwt, "no `alg` found in token"}}
 
       {false, _claims, _jwk} ->
         {:error, {:invalid_jwt, "verification failed"}}
@@ -254,8 +320,8 @@ defmodule OpenIDConnect do
     end
   end
 
-  defp peek_protected(jwks) do
-    {:ok, JOSE.JWS.peek_protected(jwks)}
+  defp peek_protected(jwt) do
+    {:ok, JOSE.JWS.peek_protected(jwt)}
   rescue
     _ -> {:error, :peek_protected}
   end
@@ -318,6 +384,7 @@ defmodule OpenIDConnect do
   defp audience_matches?(aud, expected_aud) when is_list(aud), do: Enum.member?(aud, expected_aud)
   defp audience_matches?(aud, expected_aud), do: aud === expected_aud
 
+  @doc "Fetches the userinfo claims for `access_token` from the provider's userinfo endpoint."
   def fetch_userinfo(config, access_token) do
     discovery_document_uri = config.discovery_document_uri
     req_opts = Map.get(config, :req_opts, [])

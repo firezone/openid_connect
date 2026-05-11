@@ -433,7 +433,7 @@ defmodule OpenIDConnectTest do
         |> Enum.map_join(".", fn header -> Base.encode64(header) end)
 
       assert verify(@config, token) ==
-               {:error, {:invalid_jwt, "token claims JSON is incomplete"}}
+               {:error, {:invalid_jwt, "token header JSON is incomplete"}}
     end
 
     test "returns error when token header contains invalid JSON byte" do
@@ -444,7 +444,7 @@ defmodule OpenIDConnectTest do
       token = "#{header}.#{claims}.#{signature}"
 
       assert verify(@config, token) ==
-               {:error, {:invalid_jwt, "token claims contain invalid JSON"}}
+               {:error, {:invalid_jwt, "token header contains invalid JSON"}}
     end
 
     test "returns error when token header contains invalid UTF-8 escape sequence" do
@@ -456,7 +456,7 @@ defmodule OpenIDConnectTest do
       token = "#{header}.#{claims}.#{signature}"
 
       assert verify(@config, token) ==
-               {:error, {:invalid_jwt, "token claims contain invalid UTF-8 escape sequence"}}
+               {:error, {:invalid_jwt, "token header contains invalid UTF-8 escape sequence"}}
     end
 
     test "returns error when encoded token is doesn't have valid 'alg'" do
@@ -727,6 +727,157 @@ defmodule OpenIDConnectTest do
       assert verify(config, token <> ":)") == {:error, {:invalid_jwt, "verification failed"}}
     end
 
+    test "clears the cache and retries when verification fails (signing key rotation)" do
+      # IdP rotates signing key; cached JWKS holds "old-kid", token carries "new-kid".
+      {old_raw, []} = Code.eval_file("test/fixtures/jwks/jwk.exs")
+      {_, old_pubkey} = old_raw |> JOSE.JWK.from() |> JOSE.JWK.to_public_map()
+      old_pubkey = Map.put(old_pubkey, "kid", "old-kid")
+
+      new_jwk = JOSE.JWK.generate_key({:rsa, 2048})
+      {_, new_pubkey} = JOSE.JWK.to_public_map(new_jwk)
+      new_pubkey = Map.put(new_pubkey, "kid", "new-kid")
+
+      {test_name, uri, jwks_calls} = stub_with_rotating_jwks(old_pubkey, new_pubkey)
+      config = %{@config | discovery_document_uri: uri, req_opts: req_test_options(test_name)}
+
+      # Prime the cache so `verify/2`'s pre-call peek sees a cached doc.
+      assert {:ok, _} = OpenIDConnect.Document.fetch_document(uri, config.req_opts)
+      assert :counters.get(jwks_calls, 1) == 1
+
+      claims = %{
+        "email" => "brian@example.com",
+        "exp" => DateTime.utc_now() |> DateTime.add(10, :second) |> DateTime.to_unix(),
+        "aud" => config.client_id
+      }
+
+      {_alg, token} =
+        new_jwk
+        |> JOSE.JWS.sign(JSON.encode!(claims), %{"alg" => "RS256", "kid" => "new-kid"})
+        |> JOSE.JWS.compact()
+
+      assert verify(config, token) == {:ok, claims}
+      # 1 prime + 1 refresh on unknown kid.
+      assert :counters.get(jwks_calls, 1) == 2
+    end
+
+    test "does not refresh the cache for tampered tokens whose kid is known" do
+      # Known-kid failures are signature mismatches, not rotations — must not evict (DoS guard).
+      {jwks, []} = Code.eval_file("test/fixtures/jwks/jwk.exs")
+      jwk = JOSE.JWK.from(jwks)
+      {_, jwk_pubkey} = JOSE.JWK.to_public_map(jwk)
+      jwk_pubkey = Map.put(jwk_pubkey, "kid", "known-kid")
+
+      {test_name, uri, jwks_calls} = stub_with_rotating_jwks(jwk_pubkey, jwk_pubkey)
+      config = %{@config | discovery_document_uri: uri, req_opts: req_test_options(test_name)}
+
+      assert {:ok, _} = OpenIDConnect.Document.fetch_document(uri, config.req_opts)
+      assert :counters.get(jwks_calls, 1) == 1
+
+      claims = %{"email" => "brian@example.com"}
+
+      {_alg, token} =
+        jwk
+        |> JOSE.JWS.sign(JSON.encode!(claims), %{"alg" => "RS256", "kid" => "known-kid"})
+        |> JOSE.JWS.compact()
+
+      assert verify(config, token <> ":)") == {:error, {:invalid_jwt, "verification failed"}}
+      # No refresh — the prime fetch is still the only JWKS call.
+      assert :counters.get(jwks_calls, 1) == 1
+    end
+
+    test "does not refresh the cache when the document was not previously cached" do
+      # Cold cache = JWKS already fresh; retry would just amplify upstream load.
+      {jwks, []} = Code.eval_file("test/fixtures/jwks/jwk.exs")
+      jwk = JOSE.JWK.from(jwks)
+      {_, jwk_pubkey} = JOSE.JWK.to_public_map(jwk)
+      jwk_pubkey = Map.put(jwk_pubkey, "kid", "known-kid")
+
+      {test_name, uri, jwks_calls} = stub_with_rotating_jwks(jwk_pubkey, jwk_pubkey)
+      config = %{@config | discovery_document_uri: uri, req_opts: req_test_options(test_name)}
+
+      stranger_jwk = JOSE.JWK.generate_key({:rsa, 2048})
+      claims = %{"email" => "brian@example.com"}
+
+      {_alg, token} =
+        stranger_jwk
+        |> JOSE.JWS.sign(JSON.encode!(claims), %{"alg" => "RS256", "kid" => "unknown-kid"})
+        |> JOSE.JWS.compact()
+
+      assert verify(config, token) == {:error, {:invalid_jwt, "verification failed"}}
+      assert :counters.get(jwks_calls, 1) == 1
+    end
+
+    test "preserves cached JWKS when refresh fails after unknown-kid verification" do
+      # If the refetch errors (provider unreachable), the old cached JWKS must
+      # stay intact so legitimately-signed tokens still verify.
+      {jwks, []} = Code.eval_file("test/fixtures/jwks/jwk.exs")
+      jwk = JOSE.JWK.from(jwks)
+      {_, jwk_pubkey} = JOSE.JWK.to_public_map(jwk)
+      jwk_pubkey = Map.put(jwk_pubkey, "kid", "cached-kid")
+
+      test_name = unique_test_name()
+      endpoint = "http://#{test_name}/"
+      uri = "#{endpoint}.well-known/discovery-document.json"
+      jwks_calls = :counters.new(1, [])
+
+      {disc_status, disc_body, disc_headers} =
+        OpenIDConnect.Fixtures.load_fixture("vault", "discovery_document")
+
+      disc_body = Map.put(disc_body, "jwks_uri", "#{endpoint}.well-known/jwks.json")
+
+      {jwks_status, _, jwks_headers} = OpenIDConnect.Fixtures.load_fixture("vault", "jwks")
+      jwks_body = %{"keys" => [jwk_pubkey]}
+
+      Req.Test.stub(test_name, fn conn ->
+        case conn.request_path do
+          "/.well-known/discovery-document.json" ->
+            OpenIDConnect.Fixtures.send_response(conn, disc_status, disc_body, disc_headers)
+
+          "/.well-known/jwks.json" ->
+            :counters.add(jwks_calls, 1, 1)
+
+            if :counters.get(jwks_calls, 1) == 1 do
+              OpenIDConnect.Fixtures.send_response(conn, jwks_status, jwks_body, jwks_headers)
+            else
+              Req.Test.transport_error(conn, :econnrefused)
+            end
+        end
+      end)
+
+      config = %{@config | discovery_document_uri: uri, req_opts: req_test_options(test_name)}
+
+      assert {:ok, _} = OpenIDConnect.Document.fetch_document(uri, config.req_opts)
+      assert :counters.get(jwks_calls, 1) == 1
+
+      stranger_jwk = JOSE.JWK.generate_key({:rsa, 2048})
+      bad_claims = %{"email" => "brian@example.com"}
+
+      {_alg, bad_token} =
+        stranger_jwk
+        |> JOSE.JWS.sign(JSON.encode!(bad_claims), %{"alg" => "RS256", "kid" => "unknown-kid"})
+        |> JOSE.JWS.compact()
+
+      # Refresh is attempted and fails — original verification error is returned.
+      assert verify(config, bad_token) == {:error, {:invalid_jwt, "verification failed"}}
+      assert :counters.get(jwks_calls, 1) == 2
+
+      # Cached JWKS is still usable — a token signed by the cached key verifies.
+      legit_claims = %{
+        "email" => "brian@example.com",
+        "exp" => DateTime.utc_now() |> DateTime.add(10, :second) |> DateTime.to_unix(),
+        "aud" => config.client_id
+      }
+
+      {_alg, legit_token} =
+        jwk
+        |> JOSE.JWS.sign(JSON.encode!(legit_claims), %{"alg" => "RS256", "kid" => "cached-kid"})
+        |> JOSE.JWS.compact()
+
+      assert verify(config, legit_token) == {:ok, legit_claims}
+      # No additional JWKS fetch — verification hit the preserved cache.
+      assert :counters.get(jwks_calls, 1) == 2
+    end
+
     test "returns error when document is not available" do
       {jwks, []} = Code.eval_file("test/fixtures/jwks/jwk.exs")
 
@@ -872,5 +1023,60 @@ defmodule OpenIDConnectTest do
 
       assert fetch_userinfo(config, token) == {:error, {401, "Unauthorized"}}
     end
+  end
+
+  # Stubs JWKS endpoint to serve `first_pubkey` on call 1 and `subsequent_pubkey` after.
+  defp stub_with_rotating_jwks(first_pubkey, subsequent_pubkey) do
+    test_name = unique_test_name()
+    endpoint = "http://#{test_name}/"
+    uri = "#{endpoint}.well-known/discovery-document.json"
+    jwks_calls = :counters.new(1, [])
+
+    discovery = load_discovery_fixture(endpoint)
+    jwks = load_jwks_fixture()
+
+    Req.Test.stub(test_name, fn conn ->
+      handle_rotating_request(conn, discovery, jwks, first_pubkey, subsequent_pubkey, jwks_calls)
+    end)
+
+    {test_name, uri, jwks_calls}
+  end
+
+  defp load_discovery_fixture(endpoint) do
+    {status, body, headers} =
+      OpenIDConnect.Fixtures.load_fixture("vault", "discovery_document")
+
+    body = Map.put(body, "jwks_uri", "#{endpoint}.well-known/jwks.json")
+    {status, body, headers}
+  end
+
+  defp load_jwks_fixture do
+    {status, _body, headers} = OpenIDConnect.Fixtures.load_fixture("vault", "jwks")
+    {status, headers}
+  end
+
+  defp handle_rotating_request(
+         %{request_path: "/.well-known/discovery-document.json"} = conn,
+         {status, body, headers},
+         _jwks,
+         _first,
+         _subsequent,
+         _calls
+       ) do
+    OpenIDConnect.Fixtures.send_response(conn, status, body, headers)
+  end
+
+  defp handle_rotating_request(
+         %{request_path: "/.well-known/jwks.json"} = conn,
+         _discovery,
+         {status, headers},
+         first,
+         subsequent,
+         calls
+       ) do
+    :counters.add(calls, 1, 1)
+    pubkey = if :counters.get(calls, 1) == 1, do: first, else: subsequent
+    # Wrap in `keys` so JOSE.JWK.from/1 produces a jwk_set, matching real JWKS endpoints.
+    OpenIDConnect.Fixtures.send_response(conn, status, %{"keys" => [pubkey]}, headers)
   end
 end

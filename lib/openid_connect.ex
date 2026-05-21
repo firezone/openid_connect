@@ -236,9 +236,11 @@ defmodule OpenIDConnect do
   end
 
   # Refresh out-of-band so a failed refetch (provider unreachable) leaves the old
-  # cached JWKS intact for legitimate cached-key-signed tokens.
+  # cached JWKS intact for legitimate cached-key-signed tokens. `allow_refresh?`
+  # enforces a per-URI cooldown to throttle DoS via unknown-kid spam.
   defp retry_verify(config, jwt, token_alg, token_kid, uri, req_opts, pre_cached, error) do
     with true <- should_refresh_jwks?(token_kid, pre_cached),
+         true <- Cache.allow_refresh?(uri),
          {:ok, _fresh} <- Document.refresh_document(uri, req_opts) do
       do_verify(config, jwt, token_alg, uri, req_opts)
     else

@@ -4,6 +4,12 @@ defmodule OpenIDConnect.Document.Cache do
 
   @max_size Application.compile_env(:openid_connect, :document_cache_max_size, 1_000)
 
+  @refresh_cooldown_seconds Application.compile_env(
+                              :openid_connect,
+                              :jwks_refresh_cooldown_seconds,
+                              60
+                            )
+
   @doc "Starts the cache GenServer. Defaults to a registered name of `#{inspect(__MODULE__)}`."
   def start_link(opts \\ []) do
     {name, opts} = Keyword.pop(opts, :name, __MODULE__)
@@ -40,15 +46,33 @@ defmodule OpenIDConnect.Document.Cache do
     GenServer.call(pid, :clear)
   end
 
+  @doc """
+  Atomically gates JWKS refresh for `uri` behind a per-URI cooldown. Returns
+  `true` and marks the attempt time if at least the configured cooldown has
+  elapsed (or no prior attempt is recorded); returns `false` otherwise, or when
+  `uri` is not cached.
+  """
+  def allow_refresh?(pid \\ __MODULE__, uri) do
+    GenServer.call(pid, {:allow_refresh, uri})
+  end
+
   def handle_cast({:put, uri, document}, state) do
     if document_expired?(document) do
       {:noreply, state}
     else
+      # Preserve `last_refresh_at` across the put so a successful refetch doesn't
+      # reset the cooldown an attacker is already serving time against.
+      prior_refresh_at =
+        case Map.get(state, uri) do
+          {_ref, _fetched, prior, _doc} -> prior
+          nil -> nil
+        end
+
       # Evict first so a prior timer's stale `{:remove, uri}` can't wipe this fresh entry.
       state = evict(state, uri)
       expires_in_seconds = expires_in_seconds(document.expires_at)
       timer_ref = Process.send_after(self(), {:remove, uri}, :timer.seconds(expires_in_seconds))
-      state = Map.put(state, uri, {timer_ref, DateTime.utc_now(), document})
+      state = Map.put(state, uri, {timer_ref, DateTime.utc_now(), prior_refresh_at, document})
       {:noreply, state}
     end
   end
@@ -58,7 +82,7 @@ defmodule OpenIDConnect.Document.Cache do
   end
 
   def handle_call(:clear, _from, state) do
-    for {_uri, {timer_ref, _last_fetched_at, _document}} <- state do
+    for {_uri, {timer_ref, _last_fetched_at, _last_refresh_at, _document}} <- state do
       Process.cancel_timer(timer_ref)
     end
 
@@ -67,11 +91,13 @@ defmodule OpenIDConnect.Document.Cache do
 
   def handle_call({:fetch, uri}, _from, state) do
     case Map.fetch(state, uri) do
-      {:ok, {timer_ref, _last_fetched_at, document}} ->
+      {:ok, {timer_ref, _last_fetched_at, last_refresh_at, document}} ->
         if document_expired?(document) do
           {:reply, :error, evict(state, uri)}
         else
-          state = Map.put(state, uri, {timer_ref, DateTime.utc_now(), document})
+          state =
+            Map.put(state, uri, {timer_ref, DateTime.utc_now(), last_refresh_at, document})
+
           {:reply, {:ok, document}, state}
         end
 
@@ -83,11 +109,28 @@ defmodule OpenIDConnect.Document.Cache do
   def handle_call({:peek, uri}, _from, state) do
     reply =
       case Map.fetch(state, uri) do
-        {:ok, {_timer_ref, _last_fetched_at, document}} -> {:ok, document}
+        {:ok, {_timer_ref, _last_fetched_at, _last_refresh_at, document}} -> {:ok, document}
         :error -> :error
       end
 
     {:reply, reply, state}
+  end
+
+  def handle_call({:allow_refresh, uri}, _from, state) do
+    case Map.fetch(state, uri) do
+      {:ok, {timer_ref, last_fetched_at, last_refresh_at, document}} ->
+        now = DateTime.utc_now()
+
+        if refresh_cooldown_elapsed?(last_refresh_at, now) do
+          state = Map.put(state, uri, {timer_ref, last_fetched_at, now, document})
+          {:reply, true, state}
+        else
+          {:reply, false, state}
+        end
+
+      :error ->
+        {:reply, false, state}
+    end
   end
 
   def handle_info({:remove, uri}, state) do
@@ -99,7 +142,7 @@ defmodule OpenIDConnect.Document.Cache do
       if Enum.count(state) > @max_size do
         state
         |> Enum.sort_by(
-          fn {_key, {_ref, last_fetched_at, _document}} -> last_fetched_at end,
+          fn {_key, {_ref, last_fetched_at, _last_refresh_at, _document}} -> last_fetched_at end,
           {:desc, DateTime}
         )
         |> Enum.take(@max_size)
@@ -119,11 +162,17 @@ defmodule OpenIDConnect.Document.Cache do
       {nil, state} ->
         state
 
-      {{timer_ref, _last_fetched_at, _document}, state} ->
+      {{timer_ref, _last_fetched_at, _last_refresh_at, _document}, state} ->
         Process.cancel_timer(timer_ref)
         flush_remove_messages(uri)
         state
     end
+  end
+
+  defp refresh_cooldown_elapsed?(nil, _now), do: true
+
+  defp refresh_cooldown_elapsed?(last_refresh_at, now) do
+    DateTime.diff(now, last_refresh_at, :second) >= @refresh_cooldown_seconds
   end
 
   defp flush_remove_messages(uri) do

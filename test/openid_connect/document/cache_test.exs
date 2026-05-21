@@ -45,7 +45,7 @@ defmodule OpenIDConnect.Document.CacheTest do
 
       put(uri, document)
 
-      assert %{^uri => {_ref, _last_fetched_at, ^document}} = flush()
+      assert %{^uri => {_ref, _last_fetched_at, _last_refresh_at, ^document}} = flush()
     end
 
     test "does not persist expired documents" do
@@ -63,7 +63,7 @@ defmodule OpenIDConnect.Document.CacheTest do
 
       put(uri, document)
 
-      assert %{^uri => {ref, _last_fetched_at, _document}} = flush()
+      assert %{^uri => {ref, _last_fetched_at, _last_refresh_at, _document}} = flush()
       assert Process.read_timer(ref) in 58_000..62_000
 
       send(OpenIDConnect.Document.Cache, {:remove, uri})
@@ -91,7 +91,7 @@ defmodule OpenIDConnect.Document.CacheTest do
       now = DateTime.utc_now()
       document = %{@valid_document | expires_at: DateTime.add(now, -1, :second)}
       timer_ref = Process.send_after(self(), :ignored, :timer.seconds(60))
-      state = %{uri => {timer_ref, now, document}}
+      state = %{uri => {timer_ref, now, nil, document}}
 
       assert handle_call({:fetch, uri}, self(), state) == {:reply, :error, %{}}
     end
@@ -107,7 +107,9 @@ defmodule OpenIDConnect.Document.CacheTest do
       put(pid, uri, fresh)
 
       :sys.replace_state(pid, fn state ->
-        Map.update!(state, uri, fn {ref, fetched_at, _doc} -> {ref, fetched_at, expired} end)
+        Map.update!(state, uri, fn {ref, fetched_at, refresh_at, _doc} ->
+          {ref, fetched_at, refresh_at, expired}
+        end)
       end)
 
       :sys.suspend(pid)
@@ -148,7 +150,7 @@ defmodule OpenIDConnect.Document.CacheTest do
 
       put(pid, uri, document)
 
-      assert %{^uri => {timer_ref, _last_fetched_at, _document}} = flush(pid)
+      assert %{^uri => {timer_ref, _last_fetched_at, _last_refresh_at, _document}} = flush(pid)
       assert Process.read_timer(timer_ref)
 
       assert clear(pid) == :ok
@@ -188,10 +190,10 @@ defmodule OpenIDConnect.Document.CacheTest do
       assert state = flush(pid)
       assert Enum.count(state) == 1000
 
-      {_uri, {_ref, _last_fetched_at, document}} =
+      {_uri, {_ref, _last_fetched_at, _last_refresh_at, document}} =
         Enum.min_by(
           state,
-          fn {_uri, {_ref, last_fetched_at, _document}} ->
+          fn {_uri, {_ref, last_fetched_at, _last_refresh_at, _document}} ->
             last_fetched_at
           end,
           DateTime

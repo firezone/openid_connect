@@ -878,6 +878,35 @@ defmodule OpenIDConnectTest do
       assert :counters.get(jwks_calls, 1) == 2
     end
 
+    test "throttles JWKS refreshes per URI to mitigate DoS via unknown-kid spam" do
+      # Sustained unknown-kid traffic must not translate 1:1 into JWKS refetches —
+      # the per-URI cooldown caps refreshes within the configured window.
+      {jwks, []} = Code.eval_file("test/fixtures/jwks/jwk.exs")
+      jwk = JOSE.JWK.from(jwks)
+      {_, jwk_pubkey} = JOSE.JWK.to_public_map(jwk)
+      jwk_pubkey = Map.put(jwk_pubkey, "kid", "known-kid")
+
+      {test_name, uri, jwks_calls} = stub_with_rotating_jwks(jwk_pubkey, jwk_pubkey)
+      config = %{@config | discovery_document_uri: uri, req_opts: req_test_options(test_name)}
+
+      assert {:ok, _} = OpenIDConnect.Document.fetch_document(uri, config.req_opts)
+      assert :counters.get(jwks_calls, 1) == 1
+
+      stranger_jwk = JOSE.JWK.generate_key({:rsa, 2048})
+
+      for kid <- ["unknown-1", "unknown-2", "unknown-3"] do
+        {_alg, token} =
+          stranger_jwk
+          |> JOSE.JWS.sign(JSON.encode!(%{"email" => "x"}), %{"alg" => "RS256", "kid" => kid})
+          |> JOSE.JWS.compact()
+
+        assert verify(config, token) == {:error, {:invalid_jwt, "verification failed"}}
+      end
+
+      # 1 prime + 1 refresh (first unknown kid); the next two are inside the cooldown.
+      assert :counters.get(jwks_calls, 1) == 2
+    end
+
     test "returns error when document is not available" do
       {jwks, []} = Code.eval_file("test/fixtures/jwks/jwk.exs")
 
